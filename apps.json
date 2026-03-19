@@ -1,0 +1,3 @@
+[
+  { "url": "https://${GH_PAT}:x-oauth-basic@github.com/Jeffreyapi/pharmtek_crm.git", "branch": "main" }
+]

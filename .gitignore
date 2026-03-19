@@ -1,0 +1,13 @@
+# Secrets — ne jamais committer
+.env
+*.build.json
+
+# macOS
+.DS_Store
+
+# Fichiers de build locaux
+apps.build.json
+frappe-local/
+
+# Logs
+*.log

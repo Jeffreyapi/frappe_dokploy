@@ -1,0 +1,15 @@
+# =============================================================================
+#  skip_fixtures.list
+#  Patterns de fixtures à neutraliser avant chaque bench migrate.
+#
+#  Format : un nom de fixture par ligne (sans extension .json)
+#           insensible à la casse, recherche dans tous les dossiers fixtures/
+#
+#  Exemples :
+#    Pharmacie
+#    Etablissement
+#    MyDoctype
+#
+#  Ce fichier est vide par défaut.
+#  Renseigner ici les fixtures spécifiques à votre application.
+# =============================================================================

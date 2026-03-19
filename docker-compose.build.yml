@@ -1,0 +1,49 @@
+# =============================================================================
+#  docker-compose.build.yml — override build local
+#
+#  Usage :
+#    docker compose -f docker-compose.yml -f docker-compose.build.yml up --build -d
+#
+#  Ce fichier remplace uniquement la directive `image:` par `build: .`
+#  sur l'anchor x-frappe-base. Tous les services héritent automatiquement
+#  de l'image locale reconstruite via l'anchor.
+#
+#  Variables :
+#    GH_PAT          : token GitHub pour cloner les apps privées
+#    FRAPPE_VERSION  : branche Frappe à utiliser (défaut: version-15)
+# =============================================================================
+
+x-frappe-base: &frappe_base
+  build:
+    context: .
+    dockerfile: Dockerfile
+    args:
+      FRAPPE_VERSION:   ${FRAPPE_VERSION:-version-15}
+      APPS_JSON_BASE64: ${APPS_JSON_BASE64:-}
+  image: frappe-local:dev
+  pull_policy: build
+
+services:
+  site-manager:
+    <<: *frappe_base
+
+  backend:
+    <<: *frappe_base
+
+  frontend:
+    <<: *frappe_base
+
+  websocket:
+    <<: *frappe_base
+
+  queue-default:
+    <<: *frappe_base
+
+  queue-long:
+    <<: *frappe_base
+
+  queue-short:
+    <<: *frappe_base
+
+  scheduler:
+    <<: *frappe_base

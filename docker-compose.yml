@@ -1,0 +1,249 @@
+# =============================================================================
+#  frappe_dokploy — docker-compose.yml
+#  Stack principale : dev ET prod (même fichier, comportement piloté par .env)
+#
+#  Modes :
+#    - image pré-construite (défaut) : docker compose up -d
+#    - build local à la volée       : docker compose -f docker-compose.yml \
+#                                       -f docker-compose.build.yml up --build -d
+# =============================================================================
+
+x-frappe-base: &frappe_base
+  image: ${IMAGE_NAME:-ghcr.io/jeffreyapi/frappe}:${APP_VERSION:-latest}
+  pull_policy: ${PULL_POLICY:-always}
+  volumes:
+    - sites:/home/frappe/frappe-bench/sites
+    - assets:/home/frappe/frappe-bench/sites/assets
+  networks:
+    - bench-network
+
+x-frappe-service: &frappe_service
+  <<: *frappe_base
+  deploy:
+    restart_policy:
+      condition: always
+
+x-redis-service: &redis_service
+  image: redis:7-alpine
+  networks:
+    - bench-network
+  deploy:
+    restart_policy:
+      condition: always
+  healthcheck:
+    test: ["CMD", "redis-cli", "ping"]
+    interval: 5s
+    timeout: 5s
+    retries: 3
+
+services:
+
+  # ── Site manager (one-shot : configure → create/restore/update) ─────────────
+  site-manager:
+    <<: *frappe_base
+    deploy:
+      mode: replicated
+      replicas: ${SITE_MANAGER_RUN:-1}
+      restart_policy:
+        condition: none
+    volumes:
+      - sites:/home/frappe/frappe-bench/sites
+      - assets:/home/frappe/frappe-bench/sites/assets
+      - ./deploy/scripts:/opt/frappe-deploy:ro
+      - ./deploy/config:/opt/frappe-deploy-config:ro
+    entrypoint: ["/opt/frappe-deploy/init.sh"]
+    environment:
+      SITE_NAME:            ${SITE_NAME:?SITE_NAME requis}
+      ADMIN_PASSWORD:       ${ADMIN_PASSWORD:?ADMIN_PASSWORD requis}
+      DB_HOST:              ${DB_HOST:-db}
+      DB_PORT:              "${DB_PORT:-3306}"
+      DB_ROOT_PASSWORD:     ${DB_ROOT_PASSWORD:?DB_ROOT_PASSWORD requis}
+      ENVIRONMENT:          ${ENVIRONMENT:-dev}
+      RESTORE:              ${RESTORE:-0}
+      S3_BACKUP_BUCKET:     ${S3_BACKUP_BUCKET:-}
+      S3_BACKUP_ACCESS_KEY: ${S3_BACKUP_ACCESS_KEY:-}
+      S3_BACKUP_SECRET_KEY: ${S3_BACKUP_SECRET_KEY:-}
+      S3_ENDPOINT_URL:      ${S3_ENDPOINT_URL:-}
+      APPS_DIR:             /home/frappe/frappe-bench/apps
+      SKIP_FIXTURES_FILE:   /opt/frappe-deploy-config/skip_fixtures.list
+      SKIP_FIXTURES:        ${SKIP_FIXTURES:-}
+      APPS:                 ${APPS:-}
+      UPDATE_APPS:          ${UPDATE_APPS:-}
+      REDIS_CACHE:          ${REDIS_CACHE:-redis-cache:6379}
+      REDIS_QUEUE:          ${REDIS_QUEUE:-redis-queue:6379}
+      SOCKETIO_PORT:        ${SOCKETIO_PORT:-9000}
+      NEUTRALIZE_MODE:      ${NEUTRALIZE_MODE:-rm}
+    networks:
+      - bench-network
+
+  # ── Services applicatifs ────────────────────────────────────────────────────
+  backend:
+    <<: *frappe_service
+    depends_on:
+      site-manager:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "wait-for-it", "0.0.0.0:8000"]
+      interval: 2s
+      timeout: 10s
+      retries: 30
+
+  frontend:
+    <<: *frappe_service
+    command: ["/usr/local/bin/nginx-entrypoint.sh"]
+    depends_on:
+      backend:
+        condition: service_started
+      websocket:
+        condition: service_started
+    environment:
+      BACKEND:                    backend:8000
+      FRAPPE_SITE_NAME_HEADER:    ${FRAPPE_SITE_NAME_HEADER:-$$host}
+      SOCKETIO:                   websocket:9000
+      UPSTREAM_REAL_IP_ADDRESS:   127.0.0.1
+      UPSTREAM_REAL_IP_HEADER:    X-Forwarded-For
+      UPSTREAM_REAL_IP_RECURSIVE: "off"
+      CLIENT_MAX_BODY_SIZE:       ${CLIENT_MAX_BODY_SIZE:-50m}
+      PROXY_READ_TIMEOUT:         ${PROXY_READ_TIMEOUT:-120}
+    ports:
+      - "${FRONTEND_PORT:-8080}:8080"
+    networks:
+      - bench-network
+      - dokploy-network
+    healthcheck:
+      test: ["CMD", "wait-for-it", "0.0.0.0:8080"]
+      interval: 2s
+      timeout: 30s
+      retries: 30
+
+  websocket:
+    <<: *frappe_service
+    command: ["node", "/home/frappe/frappe-bench/apps/frappe/socketio.js"]
+    depends_on:
+      site-manager:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "wait-for-it", "0.0.0.0:9000"]
+      interval: 2s
+      timeout: 10s
+      retries: 30
+
+  queue-default:
+    <<: *frappe_service
+    command: ["bench", "worker", "--queue", "default"]
+    depends_on:
+      site-manager:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "wait-for-it", "redis-queue:6379"]
+      interval: 2s
+      timeout: 10s
+      retries: 30
+
+  queue-long:
+    <<: *frappe_service
+    command: ["bench", "worker", "--queue", "long"]
+    depends_on:
+      site-manager:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "wait-for-it", "redis-queue:6379"]
+      interval: 2s
+      timeout: 10s
+      retries: 30
+
+  queue-short:
+    <<: *frappe_service
+    command: ["bench", "worker", "--queue", "short"]
+    depends_on:
+      site-manager:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "wait-for-it", "redis-queue:6379"]
+      interval: 2s
+      timeout: 10s
+      retries: 30
+
+  scheduler:
+    <<: *frappe_service
+    command: ["bench", "schedule"]
+    depends_on:
+      site-manager:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "wait-for-it", "redis-queue:6379"]
+      interval: 2s
+      timeout: 10s
+      retries: 30
+
+  # ── Base de données (optionnelle : désactiver si DB externe) ─────────────────
+  db:
+    image: mariadb:10.6
+    deploy:
+      mode: replicated
+      replicas: ${ENABLE_DB:-1}
+      restart_policy:
+        condition: always
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --skip-character-set-client-handshake
+      - --skip-innodb-read-only-compressed
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD}
+    volumes:
+      - db-data:/var/lib/mysql
+    networks:
+      - bench-network
+    healthcheck:
+      test: mysqladmin ping -h localhost --password=${DB_ROOT_PASSWORD}
+      interval: 1s
+      retries: 20
+
+  # ── Redis ────────────────────────────────────────────────────────────────────
+  redis-cache:
+    <<: *redis_service
+    volumes:
+      - redis-cache-data:/data
+
+  redis-queue:
+    <<: *redis_service
+    volumes:
+      - redis-queue-data:/data
+
+  redis-socketio:
+    <<: *redis_service
+    volumes:
+      - redis-socketio-data:/data
+
+volumes:
+  sites:
+  assets:
+  db-data:
+  redis-cache-data:
+  redis-queue-data:
+  redis-socketio-data:
+
+networks:
+  bench-network:
+  dokploy-network:
+    external: true
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Variables clés                Description                        Défaut
+# ─────────────────────────────────────────────────────────────────────────────
+# IMAGE_NAME                   Image Docker à utiliser            ghcr.io/jeffreyapi/frappe
+# APP_VERSION                  Tag de l'image                     latest
+# SITE_NAME                    Nom du site Frappe                 (requis)
+# ADMIN_PASSWORD               Mot de passe admin Frappe          (requis)
+# DB_ROOT_PASSWORD             Mot de passe root MariaDB          (requis)
+# ENVIRONMENT                  dev | prod                         dev
+# ENABLE_DB                    1 = DB incluse, 0 = DB externe     1
+# APPS                         Apps à installer sur le site       (vide)
+# RESTORE                      1 = restaurer depuis S3            0
+# S3_BACKUP_BUCKET             Bucket S3 pour backups             (vide)
+# S3_ENDPOINT_URL              Endpoint S3 compatible             (vide)
+# FRONTEND_PORT                Port exposé en local               8080
+# PULL_POLICY                  always | never | if_not_present    always
+# NEUTRALIZE_MODE              rm | empty                         rm
+# ─────────────────────────────────────────────────────────────────────────────
