@@ -1,0 +1,35 @@
+# =============================================================================
+#  Template : docker-compose.yml — à placer à la RACINE du repo app.
+#
+#  Ce fichier inclut la stack complète depuis le submodule frappe_deploy,
+#  puis ajoute les overrides spécifiques au projet (labels Traefik, etc.).
+#
+#  Instructions :
+#    1. Copier ce fichier en docker-compose.yml à la racine du repo app
+#    2. Remplacer MY_APP par le nom de l'application (ex: pharmtek, talents30)
+#    3. Adapter l'URL du site dans la règle Traefik
+#
+#  Usage :
+#    docker compose up -d                       # image depuis GHCR
+#    docker compose \
+#      -f docker-compose.yml \
+#      -f frappe_deploy/docker-compose.build.yml \
+#      up --build -d                            # build local
+# =============================================================================
+
+# Charge la stack complète depuis le submodule.
+# Les chemins dans le fichier inclus (volumes, scripts) sont résolus
+# relativement à frappe_deploy/ — comportement natif de Docker Compose.
+include:
+  - frappe_deploy/docker-compose.yml
+
+services:
+  # Overrides projet-spécifiques : labels Traefik pour le reverse proxy Dokploy.
+  # Seul le service `frontend` est exposé publiquement via Traefik.
+  frontend:
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.MY_APP.rule=Host(`MY_APP.example.com`)"
+      - "traefik.http.routers.MY_APP.tls=true"
+      - "traefik.http.routers.MY_APP.tls.certresolver=letsencrypt"
+      - "traefik.http.services.MY_APP.loadbalancer.server.port=8080"

@@ -4,46 +4,61 @@
 #  Usage :
 #    docker compose -f docker-compose.yml -f docker-compose.build.yml up --build -d
 #
-#  Ce fichier remplace uniquement la directive `image:` par `build: .`
-#  sur l'anchor x-frappe-base. Tous les services héritent automatiquement
-#  de l'image locale reconstruite via l'anchor.
+#  Ce fichier surcharge `image:` + `pull_policy:` et ajoute `build:` sur chaque
+#  service Frappe. Docker Compose fusionne les services (pas les anchors YAML
+#  entre fichiers), donc chaque service est redéfini explicitement.
 #
 #  Variables :
 #    GH_PAT          : token GitHub pour cloner les apps privées
 #    FRAPPE_VERSION  : branche Frappe à utiliser (défaut: version-15)
+#    APPS_JSON_BASE64: apps.json encodé en base64 (généré par envsubst + base64)
 # =============================================================================
 
-x-frappe-base: &frappe_base
-  build:
-    context: .
-    dockerfile: Dockerfile
-    args:
-      FRAPPE_VERSION:   ${FRAPPE_VERSION:-version-15}
-      APPS_JSON_BASE64: ${APPS_JSON_BASE64:-}
-  image: frappe-local:dev
-  pull_policy: build
+# Anchor interne pour les args de build (résolu dans ce fichier uniquement)
+x-local-build: &local_build
+  context: .
+  dockerfile: Dockerfile
+  args:
+    FRAPPE_VERSION:   ${FRAPPE_VERSION:-version-15}
+    APPS_JSON_BASE64: ${APPS_JSON_BASE64:-}
 
 services:
   site-manager:
-    <<: *frappe_base
+    build: *local_build
+    image: frappe-local:dev
+    pull_policy: build
 
   backend:
-    <<: *frappe_base
+    build: *local_build
+    image: frappe-local:dev
+    pull_policy: build
 
   frontend:
-    <<: *frappe_base
+    build: *local_build
+    image: frappe-local:dev
+    pull_policy: build
 
   websocket:
-    <<: *frappe_base
+    build: *local_build
+    image: frappe-local:dev
+    pull_policy: build
 
   queue-default:
-    <<: *frappe_base
+    build: *local_build
+    image: frappe-local:dev
+    pull_policy: build
 
   queue-long:
-    <<: *frappe_base
+    build: *local_build
+    image: frappe-local:dev
+    pull_policy: build
 
   queue-short:
-    <<: *frappe_base
+    build: *local_build
+    image: frappe-local:dev
+    pull_policy: build
 
   scheduler:
-    <<: *frappe_base
+    build: *local_build
+    image: frappe-local:dev
+    pull_policy: build

@@ -1,154 +1,449 @@
 # frappe_dokploy
 
-Repo générique de **build et déploiement** pour toute application Frappe.
+Infrastructure générique de **build** et **déploiement** pour applications Frappe/ERPNext.
 
-Fusionne `pharmtek_docker` + `pharmtek_dokploy` en un seul repo réutilisable :
-- Construction de l'image Docker (`apps.json` + `Dockerfile`)
-- Déploiement via Docker Compose (dev et prod)
-- Gestion du cycle de vie du site Frappe (create / restore / update / backup)
-
-> L'image buildée est **identique** en dev et en prod. Seule la source diffère : build local vs GHCR.
+Conçu pour être utilisé comme **git submodule** dans chaque repo d'application Frappe.
+Peut aussi fonctionner en mode standalone pour tester l'infrastructure seule.
 
 ---
 
-## Structure
+## Structure du repo
 
 ```
 frappe_dokploy/
-├── apps.json                          # apps Frappe à embarquer dans l'image
-├── Dockerfile                         # build Frappe + apps + s5cmd (autonome)
-├── docker-compose.yml                 # stack dev et prod
-├── docker-compose.build.yml           # override : build local à la volée
-├── .env.example                       # template de configuration (sans secrets)
+├── Dockerfile                   # build Frappe + apps + s5cmd (context = ce répertoire)
+├── docker-compose.yml           # stack complète (incluse via include: dans le repo app)
+├── docker-compose.build.yml     # override build local à la volée
+├── apps.json                    # exemple pour mode standalone uniquement
+├── .env.example                 # exemple pour mode standalone uniquement
 ├── resources/
-│   ├── nginx-entrypoint.sh            # entrypoint nginx custom
-│   └── nginx-template.conf            # config nginx avec headers sécurité
+│   ├── nginx-entrypoint.sh      # entrypoint nginx avec substitution de variables
+│   └── nginx-template.conf      # config nginx (headers sécurité, gzip, websocket)
 ├── deploy/
 │   ├── scripts/
-│   │   ├── init.sh                    # orchestrateur du site-manager
-│   │   └── site.sh                    # create / restore / update / backup / configure
+│   │   ├── init.sh              # orchestrateur : configure → create|restore|update
+│   │   └── site.sh              # cycle de vie complet du site Frappe
 │   └── config/
-│       └── skip_fixtures.list         # fixtures à neutraliser au migrate (vide = aucune)
-└── .github/workflows/
-    ├── publish.yml                    # build + push GHCR
-    └── notify-frappe-dokploy.yml      # template à copier dans les repos d'apps
+│       └── skip_fixtures.list   # patterns de fixtures à neutraliser (vide = aucune)
+└── templates/                   # fichiers à copier dans chaque repo app
+    ├── docker-compose.app.yml   # wrapper include: + labels Traefik
+    ├── .env.app.example         # variables spécifiques au projet
+    ├── publish.app.yml          # workflow CI/CD GitHub Actions
+    └── Makefile                 # commandes de développement
 ```
 
 ---
 
-## Démarrage rapide
+## Mode Submodule (usage principal)
 
-### 1. Configurer
+### Structure du repo app après configuration
+
+```
+mon_app/
+├── mon_app/                 ← code Python Frappe (le module de l'app)
+│   ├── hooks.py
+│   └── ...
+├── setup.py
+├── apps.json                ← apps à embarquer dans l'image (spécifique au projet)
+├── .env.example             ← valeurs de config sans secrets (commité)
+├── .env                     ← secrets locaux (gitignore)
+├── docker-compose.yml       ← inclut frappe_deploy + labels Traefik du projet
+├── Makefile                 ← raccourcis de commandes
+└── frappe_deploy/           ← ce repo, en git submodule
+    ├── Dockerfile
+    ├── docker-compose.yml
+    └── ...
+```
+
+---
+
+### Étape 1 — Ajouter le submodule
+
+```bash
+cd mon_app
+git submodule add https://github.com/Jeffreyapi/frappe_dokploy.git frappe_deploy
+git commit -m "chore: add frappe_deploy submodule"
+```
+
+Cloner un repo qui possède déjà le submodule :
+
+```bash
+# Avec submodules d'emblée (recommandé)
+git clone --recurse-submodules https://github.com/Jeffreyapi/mon_app.git
+
+# Après un clone normal
+git submodule update --init
+```
+
+---
+
+### Étape 2 — Copier les templates
+
+Toutes les commandes suivantes s'exécutent depuis la **racine du repo app**.
+
+```bash
+# ── Déploiement (obligatoire) ─────────────────────────────────────────────────
+cp frappe_deploy/templates/docker-compose.app.yml  docker-compose.yml
+cp frappe_deploy/templates/.env.app.example        .env.example
+cp frappe_deploy/templates/Makefile                Makefile
+mkdir -p .github/workflows
+cp frappe_deploy/templates/publish.app.yml         .github/workflows/publish.yml
+
+# ── Devcontainer (optionnel, pour développer l'app dans VS Code) ──────────────
+mkdir -p .devcontainer
+cp frappe_deploy/templates/.devcontainer/Dockerfile                   .devcontainer/Dockerfile
+cp frappe_deploy/templates/.devcontainer/devcontainer.json            .devcontainer/devcontainer.json
+cp frappe_deploy/templates/.devcontainer/devcontainer-post-create.sh  .devcontainer/devcontainer-post-create.sh
+chmod +x .devcontainer/devcontainer-post-create.sh
+```
+
+Remplacer `MY_APP` par le nom réel de l'application dans tous les fichiers copiés :
+
+```bash
+# Remplacer MY_APP dans tous les fichiers copiés (Linux / WSL)
+APP=pharmtek_crm   # ← adapter ici
+
+sed -i "s/MY_APP/${APP}/g" \
+  docker-compose.yml \
+  .env.example \
+  .github/workflows/publish.yml \
+  .devcontainer/devcontainer.json \
+  .devcontainer/devcontainer-post-create.sh
+```
+
+> Le `Makefile` ne contient pas de `MY_APP` — pas besoin de le modifier.
+
+---
+
+### Étape 3 — Créer `apps.json`
+
+Ce fichier liste les apps Frappe à embarquer dans l'image Docker.
+Il se place à la **racine du repo app** (pas dans `frappe_deploy/`).
+
+**App sans ERPNext** (ex : pharmtek_crm) :
+```json
+[
+  {
+    "url": "https://${GH_PAT}:x-oauth-basic@github.com/Jeffreyapi/mon_app.git",
+    "branch": "main"
+  }
+]
+```
+
+**App qui nécessite ERPNext** (ex : talents30, jurisconnect) — ERPNext **en premier** :
+```json
+[
+  { "url": "https://github.com/frappe/erpnext.git", "branch": "version-15" },
+  {
+    "url": "https://${GH_PAT}:x-oauth-basic@github.com/Jeffreyapi/mon_app.git",
+    "branch": "main"
+  }
+]
+```
+
+> `${GH_PAT}` est un placeholder substitué par `envsubst` avant le build.
+> Ne jamais écrire le token directement dans ce fichier.
+
+---
+
+### Étape 4 — Configurer l'environnement
 
 ```bash
 cp .env.example .env
 # Renseigner au minimum : SITE_NAME, ADMIN_PASSWORD, DB_ROOT_PASSWORD, IMAGE_NAME
+
+# Créer le réseau Traefik/Dokploy (une seule fois par machine)
+docker network create dokploy-network
 ```
 
-### 2. Lancer (image pré-construite depuis GHCR)
+---
+
+### Étape 5 — Démarrer la stack
+
+**Mode standard** — image pré-construite depuis GHCR :
+```bash
+make up
+# équivalent : docker compose up -d
+```
+
+**Mode build local** — reconstruit l'image depuis `apps.json` :
+```bash
+export GH_PAT=ghp_xxxxxxxxxxxx
+make build
+```
+
+Suivre le démarrage automatique du site-manager :
+```bash
+make logs
+# équivalent : docker compose logs -f site-manager
+```
+
+---
+
+### Étape 6 — CI/CD
+
+Le workflow `publish.yml` (copié depuis `templates/publish.app.yml`) se déclenche
+automatiquement à chaque push sur `main`/`develop` ou tag `v*`.
+
+**Secret GitHub requis** dans le repo app :
+
+| Secret | Description |
+|--------|-------------|
+| `GH_PAT` | Token GitHub avec scopes `repo` + `write:packages` |
+
+Image produite : `ghcr.io/jeffreyapi/MON_APP:main-abc1234` + `latest`.
+
+---
+
+## Devcontainer — environnement de développement
+
+Le devcontainer permet de **coder** l'application Frappe dans VS Code ou GitHub
+Codespaces avec un bench en mode développeur, du hot-reload et du debug Python.
+
+> Ce n'est pas la stack Docker Compose de déploiement — c'est un environnement
+> de développement séparé, tout-en-un (MariaDB + Redis + bench dans un seul conteneur).
+
+### Versions alignées avec la prod
+
+| Composant | Devcontainer | Stack de déploiement |
+|-----------|:-----------:|:-------------------:|
+| MariaDB | 10.6 | 10.6 ✓ |
+| Node.js | 18 | 18 ✓ |
+| Frappe | version-15 | version-15 ✓ |
+
+### Ouvrir le devcontainer
+
+**VS Code** (local) :
+```
+F1 → "Dev Containers: Reopen in Container"
+```
+
+**GitHub Codespaces** :
+```
+Code → Codespaces → Create codespace on main
+```
+
+### Ce que le post-create fait automatiquement
+
+```
+1. Démarre MariaDB 10.6 + Redis (services système dans le conteneur)
+2. Installe uv + frappe-bench
+3. bench init frappe-bench --frappe-branch version-15
+4. Installe les apps publiques de apps.json (ex: ERPNext)
+5. Installe l'app du repo en MODE ÉDITABLE :
+     ln -s /workspaces/mon_app  frappe-bench/apps/mon_app
+     pip install -e apps/mon_app
+   → les modifications Python dans VS Code sont immédiatement actives
+6. bench new-site development.localhost
+7. bench install-app mon_app (+ ERPNext si présent)
+8. Active le mode développeur
+```
+
+### Utilisation après ouverture
 
 ```bash
+# Démarrer le serveur de développement (depuis le terminal VS Code)
+cd ~/frappe-bench && bench start
+
+# Accéder au site
+# http://development.localhost:8000
+# Login : Administrator / admin
+```
+
+### Debug Python avec VS Code
+
+Ajouter `.vscode/launch.json` à la racine du repo app :
+
+```json
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Bench Web",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${env:HOME}/frappe-bench/apps/frappe/frappe/utils/bench_helper.py",
+      "args": ["frappe", "serve", "--port", "8000", "--noreload", "--nothreading"],
+      "cwd": "${env:HOME}/frappe-bench/sites",
+      "env": { "DEV_SERVER": "1" }
+    }
+  ]
+}
+```
+
+Puis : `F5` → "Bench Web" pour démarrer le serveur avec breakpoints.
+
+### Différence devcontainer vs stack de déploiement
+
+| | Devcontainer | `docker compose up` |
+|--|:--:|:--:|
+| But | Coder | Déployer |
+| MariaDB/Redis | Dans le conteneur | Conteneurs séparés |
+| App Frappe | Symlink éditable | Image baked |
+| Hot-reload | ✓ | ✗ |
+| Debug Python | ✓ | ✗ |
+| Traefik | ✗ | ✓ |
+
+---
+
+## Mode Standalone
+
+Pour tester l'infrastructure sans code d'application custom.
+
+```bash
+git clone https://github.com/Jeffreyapi/frappe_dokploy.git
+cd frappe_dokploy
+
+cp .env.example .env
+# Éditer .env : SITE_NAME, ADMIN_PASSWORD, DB_ROOT_PASSWORD
+
+docker network create dokploy-network
 docker compose up -d
+docker compose logs -f site-manager
 ```
 
-### 3. Lancer en mode build local (sans passer par GHCR)
-
+Build local en mode standalone :
 ```bash
-# Préparer apps.json avec le token GitHub
-export GH_PAT=ghp_xxx
-envsubst < apps.json > apps.build.json
-export APPS_JSON_BASE64=$(base64 -w 0 apps.build.json)
+export GH_PAT=ghp_xxxxxxxxxxxx
+envsubst < apps.json > /tmp/apps.build.json
+export APPS_JSON_BASE64=$(base64 -w 0 /tmp/apps.build.json)
 
 docker compose -f docker-compose.yml -f docker-compose.build.yml up --build -d
 ```
 
 ---
 
-## Adapter pour un autre projet
+## Référence des variables d'environnement
 
-### 1. Modifier `apps.json`
+Le `.env` est lu depuis la **racine du répertoire de travail** (là où `docker compose`
+est lancé), que ce soit en mode submodule ou standalone.
 
-```json
-[
-  { "url": "https://${GH_PAT}:x-oauth-basic@github.com/OWNER/mon_app.git", "branch": "main" },
-  { "url": "https://github.com/frappe/erpnext.git", "branch": "version-15" }
-]
-```
-
-### 2. Adapter le `.env`
-
-```bash
-IMAGE_NAME=ghcr.io/jeffreyapi/mon_app
-SITE_NAME=monapp.example.com
-APPS=mon_app
-```
-
-### 3. Personnaliser les fixtures à neutraliser (optionnel)
-
-Éditer `deploy/config/skip_fixtures.list` :
-```
-# Un pattern par ligne (nom de fichier sans .json, insensible à la casse)
-MonDoctype
-AutreFixture
-```
-
----
-
-## Déclencher un build depuis un repo d'app
-
-Copier `.github/workflows/notify-frappe-dokploy.yml` dans le repo de l'application.  
-Adapter le champ `app` et le nom du repo cible.
-
-**Prérequis** : créer un secret `FRAPPE_DOKPLOY_PAT` dans le repo d'app  
-(token GitHub avec scope `repo` sur `Jeffreyapi/frappe_dokploy`).
-
-```
-Repo d'app (push/tag)
-  └─→ notify-frappe-dokploy.yml
-        └─→ repository_dispatch → frappe_dokploy
-              └─→ publish.yml → build + push ghcr.io/.../frappe:app-branch-sha
-```
-
----
-
-## Variables d'environnement
+### Image Docker
 
 | Variable | Description | Défaut |
-|---|---|---|
-| `IMAGE_NAME` | Image Docker | `ghcr.io/jeffreyapi/frappe` |
+|----------|-------------|--------|
+| `IMAGE_NAME` | Image à utiliser | `ghcr.io/jeffreyapi/frappe` |
 | `APP_VERSION` | Tag de l'image | `latest` |
-| `SITE_NAME` | Nom du site Frappe | (requis) |
-| `ADMIN_PASSWORD` | Mot de passe admin | (requis) |
-| `DB_ROOT_PASSWORD` | Mot de passe root MariaDB | (requis) |
+| `PULL_POLICY` | `always` \| `never` \| `if_not_present` | `always` |
+
+### Site Frappe
+
+| Variable | Req. | Description | Défaut |
+|----------|:----:|-------------|--------|
+| `SITE_NAME` | ✓ | Nom de domaine du site Frappe | — |
+| `ADMIN_PASSWORD` | ✓ | Mot de passe administrateur | — |
+| `FRAPPE_SITE_NAME_HEADER` | | Header de résolution du site | `$host` |
+
+### Base de données
+
+| Variable | Req. | Description | Défaut |
+|----------|:----:|-------------|--------|
+| `DB_ROOT_PASSWORD` | ✓ | Mot de passe root MariaDB | — |
+| `DB_HOST` | | Hôte MariaDB | `db` |
+| `DB_PORT` | | Port MariaDB | `3306` |
+| `ENABLE_DB` | | `1` = MariaDB embarquée, `0` = DB externe | `1` |
+
+### Comportement du site-manager
+
+| Variable | Description | Défaut |
+|----------|-------------|--------|
 | `ENVIRONMENT` | `dev` ou `prod` | `dev` |
-| `ENABLE_DB` | `1` = DB incluse, `0` = DB externe | `1` |
-| `APPS` | Apps à installer sur le site | (vide) |
-| `RESTORE` | `1` = restaurer depuis S3 | `0` |
-| `S3_BACKUP_BUCKET` | Bucket S3 | (vide) |
-| `S3_ENDPOINT_URL` | Endpoint S3 compatible | (vide) |
-| `NEUTRALIZE_MODE` | `rm` ou `empty` | `rm` |
-| `FRAPPE_DEBUG` | `1` = mode verbose dans les scripts | `0` |
+| `RESTORE` | `1` = restaurer depuis S3 au démarrage | `0` |
+| `APPS` | Apps à installer sur le site (virgules) | vide |
+| `UPDATE_APPS` | Apps ciblées pour le build/update (vide = toutes) | vide |
+| `SITE_MANAGER_RUN` | `1` = actif, `0` = désactivé | `1` |
+| `NEUTRALIZE_MODE` | `rm` = supprimer \| `empty` = vider les fixtures | `rm` |
+| `SKIP_FIXTURES` | Patterns de fixtures à neutraliser (CSV) | vide |
 
-Voir `.env.example` pour la liste complète.
+### Backup S3
+
+| Variable | Description |
+|----------|-------------|
+| `S3_BACKUP_BUCKET` | Nom du bucket |
+| `S3_BACKUP_ACCESS_KEY` | Clé d'accès |
+| `S3_BACKUP_SECRET_KEY` | Clé secrète |
+| `S3_ENDPOINT_URL` | Endpoint S3-compatible (MinIO, etc.) |
+
+### Frontend / Nginx
+
+| Variable | Description | Défaut |
+|----------|-------------|--------|
+| `FRONTEND_PORT` | Port exposé localement | `8080` |
+| `CLIENT_MAX_BODY_SIZE` | Taille max des uploads | `50m` |
+| `PROXY_READ_TIMEOUT` | Timeout proxy nginx (secondes) | `120` |
 
 ---
 
-## Secrets GitHub requis
+## Cycle de vie du site
 
-| Secret | Scope | Description |
-|---|---|---|
-| `GH_PAT` | `frappe_dokploy` | Token pour cloner les apps privées + push GHCR |
-| `FRAPPE_DOKPLOY_PAT` | repos d'apps | Token pour déclencher le build (scope `repo` sur `frappe_dokploy`) |
+Logique automatique au démarrage (`init.sh`) :
+
+```
+démarrage
+  └─→ configure    (toujours : met à jour common_site_config.json)
+        ├─→ RESTORE=1  → restore   (télécharge depuis S3 et restaure)
+        ├─→ site existe → update   (migrate + build assets)
+        └─→ site absent → create   (nouveau site + installation des apps)
+```
+
+Actions manuelles :
+
+```bash
+# Via Makefile
+make backup
+make update
+make configure
+
+# Ou via docker compose
+docker compose run --rm site-manager backup
+docker compose run --rm site-manager restore
+docker compose run --rm site-manager update
+docker compose run --rm site-manager configure
+
+# Mode debug (logs verbeux)
+docker compose run --rm -e FRAPPE_DEBUG=1 site-manager update
+```
 
 ---
 
-## Actions disponibles du site-manager
+## Neutralisation des fixtures
 
-| Action | Déclenchement | Description |
-|---|---|---|
-| `auto` (défaut) | toujours | configure → create ou restore ou update selon l'état |
-| `create` | `ACTION=create` | Crée le site, installe les apps, migrate |
-| `restore` | `RESTORE=1` ou `ACTION=restore` | Restaure depuis S3, migrate |
-| `update` | `ACTION=update` | Maintenance ON, migrate, build, OFF |
-| `backup` | `ACTION=backup` | Backup local + upload S3 |
-| `configure` | `ACTION=configure` | Met à jour common_site_config.json uniquement |
+Évite d'écraser des données de production lors des migrations.
+
+**Via le fichier** `frappe_deploy/deploy/config/skip_fixtures.list` :
+```
+# Un pattern par ligne (nom de fichier sans .json, insensible à la casse)
+CustomDocType
+AnotherFixture
+```
+
+**Via `.env`** (inline) :
+```env
+SKIP_FIXTURES=CustomDocType,AnotherFixture
+NEUTRALIZE_MODE=rm    # rm = suppression | empty = remplacer par []
+```
+
+---
+
+## Mettre à jour le submodule
+
+Quand des corrections ou nouvelles fonctionnalités sont disponibles :
+
+```bash
+cd frappe_deploy && git pull origin main && cd ..
+git add frappe_deploy
+git commit -m "chore: bump frappe_deploy"
+git push
+```
+
+---
+
+## Ports et healthchecks
+
+| Service | Port interne | Healthcheck |
+|---------|:-----------:|-------------|
+| `frontend` | 8080 | `wait-for-it 0.0.0.0:8080` |
+| `backend` | 8000 | `wait-for-it 0.0.0.0:8000` |
+| `websocket` | 9000 | `wait-for-it 0.0.0.0:9000` |
+| `db` | 3306 | `mysqladmin ping` |
+| `redis-*` | 6379 | `redis-cli ping` |

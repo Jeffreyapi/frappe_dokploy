@@ -1,0 +1,63 @@
+{
+  // ==========================================================================
+  //  Devcontainer — environnement de DÉVELOPPEMENT Frappe
+  //  Adapter : remplacer MY_APP par le nom de l'application
+  //  (ou lancer le sed du README pour tout remplacer d'un coup)
+  // ==========================================================================
+
+  "name": "Frappe Dev — MY_APP",
+
+  "build": {
+    // Le Dockerfile est dans .devcontainer/, le context est la racine du repo
+    "dockerfile": "Dockerfile",
+    "context": ".."
+  },
+
+  "remoteUser": "frappe",
+
+  // Dossier ouvert dans VS Code à l'intérieur du conteneur
+  "workspaceFolder": "/workspaces/MY_APP",
+
+  // Ports forwarded vers l'hôte
+  // 8000 = Frappe web  |  9000 = socketio
+  "forwardPorts": [8000, 9000],
+
+  // PATH : priorité au venv du bench pour que python/bench soient accessibles
+  // directement dans le terminal intégré VS Code
+  "remoteEnv": {
+    "PATH": "/home/frappe/frappe-bench/env/bin:/home/frappe/.local/bin:${containerEnv:PATH}"
+  },
+
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        // Python
+        "ms-python.python",
+        "ms-python.debugpy",
+        // Qualité de code
+        "visualstudioexptteam.vscodeintellicode",
+        "ms-python.pylint",
+        // Base de données
+        "mtxr.sqltools",
+        "mtxr.sqltools-driver-mysql",
+        // Live preview
+        "ms-vscode.live-server"
+      ],
+      "settings": {
+        // Utiliser le Python du venv bench
+        "python.defaultInterpreterPath": "/home/frappe/frappe-bench/env/bin/python",
+        "terminal.integrated.defaultProfile.linux": "bash",
+        // Désactiver l'auto-attach Node (évite les conflits avec bench)
+        "debug.node.autoAttach": "disabled"
+      }
+    }
+  },
+
+  // Monter les clés SSH de l'hôte pour git clone de repos privés si besoin
+  "mounts": [
+    "source=${localEnv:HOME}${localEnv:USERPROFILE}/.ssh,target=/home/frappe/.ssh,type=bind,consistency=cached"
+  ],
+
+  // Lance le script d'initialisation après la création du conteneur
+  "postCreateCommand": "bash .devcontainer/devcontainer-post-create.sh"
+}
