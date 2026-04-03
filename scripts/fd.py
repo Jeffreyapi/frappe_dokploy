@@ -19,8 +19,8 @@ from pathlib import Path
 
 try:
     from textual.app import App, ComposeResult
-from textual.containers import Horizontal, Vertical, Grid
-from textual.widgets import Button, Footer, Header, Input, Label, Static, TextArea
+    from textual.containers import Horizontal, Vertical, Grid
+    from textual.widgets import Button, Footer, Header, Input, Label, Static, TextArea
     from textual.message import Message
 except ImportError:  # pragma: no cover - guidance for users sans dépendances
     raise SystemExit(
