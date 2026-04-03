@@ -14,10 +14,17 @@ git init
 git submodule add https://github.com/Jeffreyapi/frappe_dokploy.git frappe_deploy
 
 # dépendance TUI via uv (package manager unique)
+# Option 1 (recommandé) : venv local
+uv venv .venv
+source .venv/bin/activate    # Windows : .venv\\Scripts\\activate
 uv pip install textual
 
-# lance le TUI : copie des templates + remplacements MY_APP
-python -m scripts.fd
+# Option 2 (global) : sans venv
+# uv pip install --system textual
+
+# lance le TUI depuis la racine du projet (où se trouve le dossier frappe_deploy)
+python frappe_deploy/scripts/fd.py
+# (alternatif) cd frappe_deploy && python -m scripts.fd
 ```
 
 ---
