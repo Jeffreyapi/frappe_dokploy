@@ -156,15 +156,19 @@ class FDApp(App):
                 yield Button("Quitter", id="btn-quit", variant="error")
             with Grid(id="form"):
                 yield Label("Nom de l'app")
-                yield Input(self._app_name, placeholder="Nom de l'app", id="app-input")
+                yield Input(
+                    "",
+                    placeholder=f"{self._app_name} (auto si vide)",
+                    id="app-input",
+                )
                 yield Label("Frappe branch")
-                yield Input("version-15", id="branch-input")
+                yield Input("", placeholder="version-15", id="branch-input")
                 yield Label("Site name")
-                yield Input("development.localhost", id="site-input")
+                yield Input("", placeholder="development.localhost", id="site-input")
                 yield Label("Admin password")
-                yield Input("admin", password=True, id="admin-input")
+                yield Input("", placeholder="admin", password=True, id="admin-input")
                 yield Label("DB root password")
-                yield Input("123", password=True, id="db-input")
+                yield Input("", placeholder="123", password=True, id="db-input")
             yield Static("Logs :", id="log-label")
             yield TextArea("", id="logs", read_only=True, theme="monokai")
         yield Footer()
