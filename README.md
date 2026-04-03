@@ -34,6 +34,109 @@ frappe_dokploy/
 
 ---
 
+## Créer une nouvelle app Frappe
+
+Cette section couvre la création d'une app Frappe **from scratch** — du scaffolding initial jusqu'à l'intégration avec `frappe_dokploy`.
+
+> **Prérequis** : avoir un bench disponible (devcontainer VS Code, GitHub Codespaces, ou bench installé localement).
+
+---
+
+### 1 — Scaffolder l'app avec bench
+
+```bash
+# Depuis le répertoire frappe-bench (~/frappe-bench dans le devcontainer)
+bench new-app mon_app
+```
+
+`bench new-app` pose les questions suivantes, toutes optionnelles (`Entrée` pour passer) :
+
+| Prompt | Exemple |
+|--------|---------|
+| App Title | Mon App |
+| App Description | Description de l'application |
+| App Publisher | Jeffreyapi |
+| App Email | dev@example.com |
+| App License | MIT |
+
+Résultat — arborescence générée dans `apps/mon_app/` :
+
+```
+apps/mon_app/
+├── mon_app/
+│   ├── __init__.py
+│   ├── hooks.py            ← points d'extension Frappe
+│   ├── modules.txt         ← liste des modules
+│   ├── patches.txt         ← patches de migration
+│   └── public/             ← assets statiques (JS, CSS)
+├── setup.py
+├── MANIFEST.in
+├── requirements.txt
+└── .gitignore
+```
+
+---
+
+### 2 — Tester l'app en local (devcontainer)
+
+```bash
+# Installer l'app sur le site de développement
+bench --site development.localhost install-app mon_app
+
+# Démarrer le serveur
+bench start
+
+# Accéder au site
+# http://development.localhost:8000
+```
+
+---
+
+### 3 — Initialiser le repo Git et pousser sur GitHub
+
+```bash
+cd ~/frappe-bench/apps/mon_app
+
+git init
+git add .
+git commit -m "chore: initial app scaffold"
+
+# Créer le repo sur GitHub, puis :
+git remote add origin https://github.com/Jeffreyapi/mon_app.git
+git push -u origin main
+```
+
+> **Tip** : ajouter `.env` et `frappe_deploy/` dans le `.gitignore` de l'app avant le premier commit.
+
+---
+
+### 4 — Cloner le repo et ajouter la stack de déploiement
+
+Une fois le repo GitHub créé, depuis votre machine de déploiement :
+
+```bash
+git clone https://github.com/Jeffreyapi/mon_app.git
+cd mon_app
+```
+
+Puis suivre les étapes du **Mode Submodule** ci-dessous (ajout du submodule,
+copie des templates, configuration de `apps.json` et `.env`).
+
+---
+
+### Récapitulatif du flux complet
+
+```
+bench new-app mon_app          → scaffolding Python
+git init + push                → repo GitHub
+git submodule add frappe_dokploy → infrastructure Docker
+apps.json                      → déclare l'app à embarquer dans l'image
+make build                     → construit l'image Docker
+make up                        → démarre la stack (create site automatique)
+```
+
+---
+
 ## Mode Submodule (usage principal)
 
 ### Structure du repo app après configuration
