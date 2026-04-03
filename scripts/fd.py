@@ -19,8 +19,8 @@ from pathlib import Path
 
 try:
     from textual.app import App, ComposeResult
-    from textual.containers import Horizontal, Vertical
-    from textual.widgets import Button, Footer, Header, Input, Label, Static, TextArea
+from textual.containers import Horizontal, Vertical, Grid
+from textual.widgets import Button, Footer, Header, Input, Label, Static, TextArea
     from textual.message import Message
 except ImportError:  # pragma: no cover - guidance for users sans dépendances
     raise SystemExit(
@@ -86,6 +86,29 @@ def replace_my_app(app_name: str) -> list[str]:
     return logs
 
 
+def replace_dev_vars(branch: str, site: str, admin_pw: str, db_pw: str) -> list[str]:
+    """Injecte les valeurs dans devcontainer-post-create.sh si présent."""
+    file = Path(".devcontainer/devcontainer-post-create.sh")
+    if not file.exists():
+        return ["[warn] .devcontainer/devcontainer-post-create.sh introuvable"]
+    text = file.read_text(encoding="utf-8")
+    replacements = {
+        'FRAPPE_BRANCH="version-15"': f'FRAPPE_BRANCH="{branch}"',
+        'SITE_NAME="development.localhost"': f'SITE_NAME="{site}"',
+        'DB_ROOT_PASSWORD="123"': f'DB_ROOT_PASSWORD="{db_pw}"',
+        'ADMIN_PASSWORD="admin"': f'ADMIN_PASSWORD="{admin_pw}"',
+    }
+    for needle, repl in replacements.items():
+        text = text.replace(needle, repl)
+    file.write_text(text, encoding="utf-8")
+    return [
+        f"FRAPPE_BRANCH -> {branch}",
+        f"SITE_NAME -> {site}",
+        "DB_ROOT_PASSWORD -> ****",
+        "ADMIN_PASSWORD -> ****",
+    ]
+
+
 def bench_commands(app_name: str) -> str:
     return f"""# A exécuter dans le devcontainer / Codespaces (bench déjà dispo)
 cd ~/frappe-bench
@@ -131,7 +154,17 @@ class FDApp(App):
                 yield Button("Init (copie + replace)", id="btn-init", variant="success")
                 yield Button("Voir commandes bench", id="btn-bench", variant="primary")
                 yield Button("Quitter", id="btn-quit", variant="error")
-            yield Input(self._app_name, placeholder="Nom de l'app", id="app-input")
+            with Grid(id="form"):
+                yield Label("Nom de l'app")
+                yield Input(self._app_name, placeholder="Nom de l'app", id="app-input")
+                yield Label("Frappe branch")
+                yield Input("version-15", id="branch-input")
+                yield Label("Site name")
+                yield Input("development.localhost", id="site-input")
+                yield Label("Admin password")
+                yield Input("admin", password=True, id="admin-input")
+                yield Label("DB root password")
+                yield Input("123", password=True, id="db-input")
             yield Static("Logs :", id="log-label")
             yield TextArea("", id="logs", read_only=True, theme="monokai")
         yield Footer()
@@ -155,12 +188,25 @@ class FDApp(App):
     def app_name(self) -> str:
         return self.query_one("#app-input", Input).value.strip() or default_app_name()
 
+    def branch(self) -> str:
+        return self.query_one("#branch-input", Input).value.strip() or "version-15"
+
+    def site(self) -> str:
+        return self.query_one("#site-input", Input).value.strip() or "development.localhost"
+
+    def admin_pw(self) -> str:
+        return self.query_one("#admin-input", Input).value or "admin"
+
+    def db_pw(self) -> str:
+        return self.query_one("#db-input", Input).value or "123"
+
     def do_init(self) -> None:
         name = self.app_name()
         try:
             log_copy = copy_templates()
             log_replace = replace_my_app(name)
-            self.write_logs([f"[ok] Init terminé pour {name}"] + log_copy + log_replace)
+            log_dev = replace_dev_vars(self.branch(), self.site(), self.admin_pw(), self.db_pw())
+            self.write_logs([f"[ok] Init terminé pour {name}"] + log_copy + log_replace + log_dev)
         except Exception as exc:  # pragma: no cover
             self.write_logs([f"[err] {exc}"])
 
