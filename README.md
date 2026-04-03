@@ -7,6 +7,21 @@ Peut aussi fonctionner en mode standalone pour tester l'infrastructure seule.
 
 ---
 
+## Démarrage rapide (nouveau repo)
+
+```bash
+git init
+git submodule add https://github.com/Jeffreyapi/frappe_dokploy.git frappe_deploy
+
+# dépendance TUI via uv (package manager unique)
+uv pip install textual
+
+# lance le TUI : copie des templates + remplacements MY_APP
+python -m scripts.fd
+```
+
+---
+
 ## Structure du repo
 
 ```
@@ -34,105 +49,100 @@ frappe_dokploy/
 
 ---
 
-## Créer une nouvelle app Frappe
+## Créer une nouvelle app Frappe (flux recommandé)
 
-Cette section couvre la création d'une app Frappe **from scratch** — du scaffolding initial jusqu'à l'intégration avec `frappe_dokploy`.
+Ce flux part d'un repo vide, ajoute le submodule `frappe_dokploy`, ouvre le
+devcontainer pour disposer d'un bench prêt, puis génère l'app avec `bench`.
 
-> **Prérequis** : avoir un bench disponible (devcontainer VS Code, GitHub Codespaces, ou bench installé localement).
-
----
-
-### 1 — Scaffolder l'app avec bench
-
-```bash
-# Depuis le répertoire frappe-bench (~/frappe-bench dans le devcontainer)
-bench new-app mon_app
-```
-
-`bench new-app` pose les questions suivantes, toutes optionnelles (`Entrée` pour passer) :
-
-| Prompt | Exemple |
-|--------|---------|
-| App Title | Mon App |
-| App Description | Description de l'application |
-| App Publisher | Jeffreyapi |
-| App Email | dev@example.com |
-| App License | MIT |
-
-Résultat — arborescence générée dans `apps/mon_app/` :
-
-```
-apps/mon_app/
-├── mon_app/
-│   ├── __init__.py
-│   ├── hooks.py            ← points d'extension Frappe
-│   ├── modules.txt         ← liste des modules
-│   ├── patches.txt         ← patches de migration
-│   └── public/             ← assets statiques (JS, CSS)
-├── setup.py
-├── MANIFEST.in
-├── requirements.txt
-└── .gitignore
-```
+> **Prérequis** : VS Code + extension Dev Containers (ou Codespaces), Docker
+démarré, et permissions GitHub pour créer le repo applicatif.
 
 ---
 
-### 2 — Tester l'app en local (devcontainer)
+### 1 — Préparer le repo et copier le submodule
 
 ```bash
-# Installer l'app sur le site de développement
-bench --site development.localhost install-app mon_app
-
-# Démarrer le serveur
-bench start
-
-# Accéder au site
-# http://development.localhost:8000
-```
-
----
-
-### 3 — Initialiser le repo Git et pousser sur GitHub
-
-```bash
-cd ~/frappe-bench/apps/mon_app
-
+mkdir mon_app && cd mon_app
+# initialiser votre repo git (ou créez-le d'abord sur GitHub puis clonez-le)
 git init
-git add .
-git commit -m "chore: initial app scaffold"
 
-# Créer le repo sur GitHub, puis :
+# ajouter l'infra en submodule
+git submodule add https://github.com/Jeffreyapi/frappe_dokploy.git frappe_deploy
+
+# copier les fichiers de base depuis le submodule
+cp frappe_deploy/templates/docker-compose.app.yml  docker-compose.yml
+cp frappe_deploy/templates/.env.app.example        .env.example
+cp frappe_deploy/templates/Makefile                Makefile
+mkdir -p .github/workflows
+cp frappe_deploy/templates/publish.app.yml         .github/workflows/publish.yml
+
+# devcontainer (pour avoir le bench prêt dans VS Code)
+mkdir -p .devcontainer
+cp frappe_deploy/templates/.devcontainer/Dockerfile                   .devcontainer/Dockerfile
+cp frappe_deploy/templates/.devcontainer/devcontainer.json            .devcontainer/devcontainer.json
+cp frappe_deploy/templates/.devcontainer/devcontainer-post-create.sh  .devcontainer/devcontainer-post-create.sh
+chmod +x .devcontainer/devcontainer-post-create.sh
+
+# remplacer MY_APP automatiquement (prend le nom du dossier courant)
+chmod +x frappe_deploy/scripts/rename_app.sh
+frappe_deploy/scripts/rename_app.sh
+# Optionnel : APP_NAME=mon_app frappe_deploy/scripts/rename_app.sh
+```
+
+---
+
+### 2 — Ouvrir le devcontainer pour obtenir le bench
+
+Dans VS Code : `F1 → Dev Containers: Reopen in Container` (ou Codespaces).
+Le script post-create fait : MariaDB + Redis, `bench init frappe-bench` et
+création du site `development.localhost` prêt à recevoir l'app.
+
+> Tip : un TUI léger est dispo (`python -m scripts.fd`) pour lancer l'init
+> (copie + remplacements) et afficher les commandes bench.
+
+---
+
+### 3 — Générer l'app avec bench (à l'intérieur du devcontainer)
+
+```bash
+# dans le terminal VS Code
+cd ~/frappe-bench
+bench new-app mon_app
+
+# ramener le code dans le repo (workspace) et symlink vers le bench
+cp -a apps/mon_app/. /workspaces/mon_app/
+rm -rf apps/mon_app
+ln -s /workspaces/mon_app apps/mon_app
+
+# installer l'app sur le site de dev
+bench --site development.localhost install-app mon_app
+bench start  # serveur de dev : http://development.localhost:8000
+```
+
+> Le `Makefile` reste valable pour les commandes Docker de déploiement.
+
+---
+
+### 4 — Versionner et pousser sur GitHub
+
+```bash
+cd /workspaces/mon_app
+git add .
+git commit -m "chore: scaffold initial"
 git remote add origin https://github.com/Jeffreyapi/mon_app.git
 git push -u origin main
 ```
 
-> **Tip** : ajouter `.env` et `frappe_deploy/` dans le `.gitignore` de l'app avant le premier commit.
-
 ---
 
-### 4 — Cloner le repo et ajouter la stack de déploiement
-
-Une fois le repo GitHub créé, depuis votre machine de déploiement :
-
-```bash
-git clone https://github.com/Jeffreyapi/mon_app.git
-cd mon_app
-```
-
-Puis suivre les étapes du **Mode Submodule** ci-dessous (ajout du submodule,
-copie des templates, configuration de `apps.json` et `.env`).
-
----
-
-### Récapitulatif du flux complet
+### Récapitulatif du flux
 
 ```
-bench new-app mon_app          → scaffolding Python
-git init + push                → repo GitHub
-git submodule add frappe_dokploy → infrastructure Docker
-apps.json                      → déclare l'app à embarquer dans l'image
-make build                     → construit l'image Docker
-make up                        → démarre la stack (create site automatique)
+submodule + templates        → infra prête
+Reopen in Container          → bench initialisé
+bench new-app + symlink      → app générée dans le repo
+install-app + bench start    → test local immédiat
+git push                     → repo prêt pour CI/CD
 ```
 
 ---
