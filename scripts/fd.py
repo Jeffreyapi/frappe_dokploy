@@ -22,6 +22,7 @@ try:
     from textual.containers import Horizontal, Vertical, Grid
     from textual.widgets import Button, Footer, Header, Input, Label, Static, TextArea
     from textual.message import Message
+    from textual.screen import Screen
 except ImportError:  # pragma: no cover - guidance for users sans dépendances
     raise SystemExit(
         "Textual n'est pas installé. Installez-le avec :\n\n  pip install textual\n"
@@ -157,18 +158,22 @@ class FDApp(App):
             with Grid(id="form"):
                 yield Label("Nom de l'app")
                 yield Input(
-                    "",
+                    self._app_name,
                     placeholder=f"{self._app_name} (auto si vide)",
                     id="app-input",
                 )
                 yield Label("Frappe branch")
-                yield Input("", placeholder="version-15", id="branch-input")
+                yield Input("version-15", placeholder="version-15", id="branch-input")
                 yield Label("Site name")
-                yield Input("", placeholder="development.localhost", id="site-input")
+                yield Input(
+                    "development.localhost",
+                    placeholder="development.localhost",
+                    id="site-input",
+                )
                 yield Label("Admin password")
-                yield Input("", placeholder="admin", password=True, id="admin-input")
+                yield Input("admin", placeholder="admin", password=True, id="admin-input")
                 yield Label("DB root password")
-                yield Input("", placeholder="123", password=True, id="db-input")
+                yield Input("123", placeholder="123", password=True, id="db-input")
             yield Static("Logs :", id="log-label")
             yield TextArea("", id="logs", read_only=True, theme="monokai")
         yield Footer()
@@ -216,32 +221,9 @@ class FDApp(App):
 
     def show_bench(self) -> None:
         cmds = bench_commands(self.app_name())
-        self.write_logs(["[info] commandes bench prêtes; ouvrir l'aide complète"])
-        self.push_screen(CommandScreen(cmds))
-
-
-class CommandScreen(App):
-    CSS = """
-    Screen {align: center middle;}
-    #wrap {width: 90%; height: 90%;}
-    #cmds {border: solid #666;}
-    """
-
-    BINDINGS = [("escape", "pop_screen", "Retour"), ("q", "pop_screen", "Retour")]
-
-    def __init__(self, commands: str) -> None:
-        super().__init__()
-        self.commands = commands
-
-    def compose(self) -> ComposeResult:
-        yield Header(show_clock=False)
-        with Vertical(id="wrap"):
-            yield Label("Commandes à exécuter dans le devcontainer", id="subtitle")
-            yield TextArea(self.commands, id="cmds", read_only=True, theme="monokai")
-        yield Footer()
-
-    def action_pop_screen(self) -> None:
-        self.pop_screen()
+        self.write_logs(
+            ["[bench] commandes à exécuter dans le devcontainer :", cmds.strip()]
+        )
 
 
 def main() -> None:
