@@ -11,7 +11,7 @@ from pathlib import Path
 
 try:
     from textual.app import App, ComposeResult
-    from textual.containers import Horizontal, Vertical
+    from textual.containers import Grid, Horizontal, Vertical
     from textual.widgets import Button, Footer, Header, Input, Label, TextArea
 except ImportError:
     raise SystemExit(
@@ -116,94 +116,70 @@ bench start  # http://development.localhost:8000"""
 
 class FDApp(App):
     CSS = """
-    /* ── Fond général ── */
     Screen {
         background: #0d1117;
+        align: center top;
     }
 
-    /* ── Conteneur principal ── */
     #main {
-        width: 80;
-        margin: 1 auto;
+        width: 76;
+        margin-top: 1;
+    }
+
+    /* ── Formulaire en grille 2 colonnes ── */
+    #form {
+        grid-size: 2;
+        grid-columns: 20 1fr;
+        grid-rows: 3 3 3 3 3;
+        border: solid #30363d;
+        padding: 1 2;
+        margin-bottom: 1;
+        height: auto;
+    }
+
+    #form Label {
+        color: #8b949e;
+        content-align: left middle;
+        height: 3;
         padding: 0 1;
     }
 
-    /* ── Sections ── */
-    .section-title {
-        color: #58a6ff;
-        text-style: bold;
-        margin: 1 0 0 0;
-    }
-
-    .section-box {
-        border: solid #30363d;
-        padding: 0 1 1 1;
-        margin-bottom: 1;
-    }
-
-    /* ── Lignes de champ ── */
-    .field-row {
+    #form Input {
         height: 3;
-        margin-bottom: 0;
-    }
-
-    .field-label {
-        width: 22;
-        content-align: left middle;
-        color: #8b949e;
-        padding: 1 0;
-    }
-
-    .field-input {
-        width: 1fr;
-    }
-
-    Input {
         background: #161b22;
         border: tall #30363d;
         color: #e6edf3;
     }
 
-    Input:focus {
+    #form Input:focus {
         border: tall #58a6ff;
+    }
+
+    /* ── Séparateur visuel dans le grid ── */
+    .sep {
+        column-span: 2;
+        height: 1;
+        color: #21262d;
+        background: #21262d;
     }
 
     /* ── Boutons ── */
     #btn-row {
-        margin: 1 0;
         height: 3;
+        margin-bottom: 1;
     }
 
-    #btn-init {
-        width: 1fr;
-        margin-right: 1;
-    }
+    #btn-init  { width: 1fr; }
+    #btn-bench { width: 1fr; }
+    #btn-quit  { width: 12; }
 
-    #btn-bench {
-        width: 1fr;
-        margin-right: 1;
-    }
-
-    #btn-quit {
-        width: 14;
-    }
-
-    /* ── Zone de sortie ── */
-    #output-title {
-        color: #58a6ff;
-        text-style: bold;
-        margin: 0 0 0 0;
-    }
-
+    /* ── Résultat ── */
     #output {
         height: 14;
         border: solid #30363d;
         background: #0d1117;
-        color: #3fb950;
-        padding: 0 1;
     }
 
-    /* ── Hint en bas ── */
     #hint {
         color: #484f58;
         text-align: center;
@@ -222,61 +198,29 @@ class FDApp(App):
         yield Header(show_clock=False)
         with Vertical(id="main"):
 
-            # ── Section : App ──────────────────────────────────────────
-            yield Label("APP", classes="section-title")
-            with Vertical(classes="section-box"):
-                with Horizontal(classes="field-row"):
-                    yield Label("Nom de l'app", classes="field-label")
-                    yield Input(
-                        self._default_name,
-                        id="app-input",
-                        classes="field-input",
-                    )
-                with Horizontal(classes="field-row"):
-                    yield Label("Frappe branch", classes="field-label")
-                    yield Input(
-                        "version-15",
-                        id="branch-input",
-                        classes="field-input",
-                    )
+            # ── Formulaire ────────────────────────────────────────────
+            with Grid(id="form"):
+                # APP
+                yield Label("Nom de l'app")
+                yield Input(self._default_name, id="app-input")
+                yield Label("Frappe branch")
+                yield Input("version-15", id="branch-input")
+                # DEVCONTAINER
+                yield Label("Site name")
+                yield Input("development.localhost", id="site-input")
+                yield Label("Admin password")
+                yield Input("admin", password=True, id="admin-input")
+                yield Label("DB root password")
+                yield Input("123", password=True, id="db-input")
 
-            # ── Section : DevContainer ─────────────────────────────────
-            yield Label("DEVCONTAINER", classes="section-title")
-            with Vertical(classes="section-box"):
-                with Horizontal(classes="field-row"):
-                    yield Label("Site name", classes="field-label")
-                    yield Input(
-                        "development.localhost",
-                        id="site-input",
-                        classes="field-input",
-                    )
-                with Horizontal(classes="field-row"):
-                    yield Label("Admin password", classes="field-label")
-                    yield Input(
-                        "admin",
-                        password=True,
-                        id="admin-input",
-                        classes="field-input",
-                    )
-                with Horizontal(classes="field-row"):
-                    yield Label("DB root password", classes="field-label")
-                    yield Input(
-                        "123",
-                        password=True,
-                        id="db-input",
-                        classes="field-input",
-                    )
-
-            # ── Boutons d'action ───────────────────────────────────────
+            # ── Actions ───────────────────────────────────────────────
             with Horizontal(id="btn-row"):
                 yield Button("▶  Lancer l'Init", id="btn-init", variant="success")
-                yield Button("   Commandes bench", id="btn-bench", variant="primary")
-                yield Button("Quitter", id="btn-quit", variant="error")
+                yield Button("Commandes bench",  id="btn-bench", variant="primary")
+                yield Button("Quitter",          id="btn-quit",  variant="error")
 
-            # ── Sortie ────────────────────────────────────────────────
-            yield Label("RÉSULTAT", id="output-title")
+            # ── Résultat ──────────────────────────────────────────────
             yield TextArea("En attente…", id="output", read_only=True, theme="monokai")
-
             yield Label("Tab = champ suivant  •  q = quitter", id="hint")
 
         yield Footer()
