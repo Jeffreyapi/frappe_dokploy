@@ -1,14 +1,6 @@
 #!/usr/bin/env python
 """
 TUI Textual pour automatiser les étapes d'init d'une app Frappe avec le submodule frappe_dokploy.
-
-Fonctions :
-- Init : copie les templates depuis frappe_deploy, remplace MY_APP par le nom choisi.
-- Bench cmds : affiche les commandes à exécuter dans un environnement disposant de bench (devcontainer/Codespaces).
-
-Contraintes :
-- Aucune action Docker.
-- App par défaut = nom du dossier courant (surchage possible).
 """
 
 from __future__ import annotations
@@ -19,11 +11,9 @@ from pathlib import Path
 
 try:
     from textual.app import App, ComposeResult
-    from textual.containers import Horizontal, Vertical, Grid
-    from textual.widgets import Button, Footer, Header, Input, Label, Static, TextArea
-    from textual.message import Message
-    from textual.screen import Screen
-except ImportError:  # pragma: no cover - guidance for users sans dépendances
+    from textual.containers import Horizontal, Vertical
+    from textual.widgets import Button, Footer, Header, Input, Label, TextArea
+except ImportError:
     raise SystemExit(
         "Textual n'est pas installé. Installez-le avec :\n\n  pip install textual\n"
     )
@@ -66,11 +56,11 @@ def copy_templates() -> list[str]:
     for src, dst in COPY_MAP.items():
         ensure_parents(dst)
         shutil.copy2(src, dst)
-        logs.append(f"copié: {dst}")
+        logs.append(f"  ✓  {dst}")
     dst = Path(".devcontainer/devcontainer-post-create.sh")
     if dst.exists():
         dst.chmod(dst.stat().st_mode | 0o111)
-        logs.append("chmod +x devcontainer-post-create.sh")
+        logs.append("  ✓  chmod +x devcontainer-post-create.sh")
     return logs
 
 
@@ -83,15 +73,14 @@ def replace_my_app(app_name: str) -> list[str]:
         if "MY_APP" not in content:
             continue
         file.write_text(content.replace("MY_APP", app_name), encoding="utf-8")
-        logs.append(f"MY_APP -> {app_name} : {file}")
+        logs.append(f"  ✓  MY_APP → {app_name}  ({file})")
     return logs
 
 
 def replace_dev_vars(branch: str, site: str, admin_pw: str, db_pw: str) -> list[str]:
-    """Injecte les valeurs dans devcontainer-post-create.sh si présent."""
     file = Path(".devcontainer/devcontainer-post-create.sh")
     if not file.exists():
-        return ["[warn] .devcontainer/devcontainer-post-create.sh introuvable"]
+        return ["  ⚠  devcontainer-post-create.sh introuvable"]
     text = file.read_text(encoding="utf-8")
     replacements = {
         'FRAPPE_BRANCH="version-15"': f'FRAPPE_BRANCH="{branch}"',
@@ -103,132 +92,241 @@ def replace_dev_vars(branch: str, site: str, admin_pw: str, db_pw: str) -> list[
         text = text.replace(needle, repl)
     file.write_text(text, encoding="utf-8")
     return [
-        f"FRAPPE_BRANCH -> {branch}",
-        f"SITE_NAME -> {site}",
-        "DB_ROOT_PASSWORD -> ****",
-        "ADMIN_PASSWORD -> ****",
+        f"  ✓  FRAPPE_BRANCH → {branch}",
+        f"  ✓  SITE_NAME → {site}",
+        "  ✓  DB_ROOT_PASSWORD → (défini)",
+        "  ✓  ADMIN_PASSWORD → (défini)",
     ]
 
 
 def bench_commands(app_name: str) -> str:
-    return f"""# A exécuter dans le devcontainer / Codespaces (bench déjà dispo)
+    return f"""# À exécuter dans le devcontainer / Codespaces
 cd ~/frappe-bench
 bench new-app {app_name}
 
-# ramener le code dans le repo et symlink pour hot-reload
+# Ramener le code dans le repo + symlink pour hot-reload
 cp -a apps/{app_name}/. /workspaces/{app_name}/
 rm -rf apps/{app_name}
 ln -s /workspaces/{app_name} apps/{app_name}
 
-# installer l'app sur le site de dev
+# Installer l'app sur le site de dev
 bench --site development.localhost install-app {app_name}
-bench start  # http://development.localhost:8000
-"""
-
-
-class InitCompleted(Message):
-    def __init__(self, logs: list[str]) -> None:
-        super().__init__()
-        self.logs = logs
+bench start  # http://development.localhost:8000"""
 
 
 class FDApp(App):
     CSS = """
-    Screen {align: center middle;}
-    #panel {width: 90%; height: 80%;}
-    #actions Button {margin: 1 1;}
-    #logs {height: 12; border: solid #666;}
+    /* ── Fond général ── */
+    Screen {
+        background: #0d1117;
+    }
+
+    /* ── Conteneur principal ── */
+    #main {
+        width: 80;
+        margin: 1 auto;
+        padding: 0 1;
+    }
+
+    /* ── Sections ── */
+    .section-title {
+        color: #58a6ff;
+        text-style: bold;
+        margin: 1 0 0 0;
+    }
+
+    .section-box {
+        border: solid #30363d;
+        padding: 0 1 1 1;
+        margin-bottom: 1;
+    }
+
+    /* ── Lignes de champ ── */
+    .field-row {
+        height: 3;
+        margin-bottom: 0;
+    }
+
+    .field-label {
+        width: 22;
+        content-align: left middle;
+        color: #8b949e;
+        padding: 1 0;
+    }
+
+    .field-input {
+        width: 1fr;
+    }
+
+    Input {
+        background: #161b22;
+        border: tall #30363d;
+        color: #e6edf3;
+    }
+
+    Input:focus {
+        border: tall #58a6ff;
+    }
+
+    /* ── Boutons ── */
+    #btn-row {
+        margin: 1 0;
+        height: 3;
+    }
+
+    #btn-init {
+        width: 1fr;
+        margin-right: 1;
+    }
+
+    #btn-bench {
+        width: 1fr;
+        margin-right: 1;
+    }
+
+    #btn-quit {
+        width: 14;
+    }
+
+    /* ── Zone de sortie ── */
+    #output-title {
+        color: #58a6ff;
+        text-style: bold;
+        margin: 0 0 0 0;
+    }
+
+    #output {
+        height: 14;
+        border: solid #30363d;
+        background: #0d1117;
+        color: #3fb950;
+        padding: 0 1;
+    }
+
+    /* ── Hint en bas ── */
+    #hint {
+        color: #484f58;
+        text-align: center;
+        margin-top: 1;
+    }
     """
 
     BINDINGS = [("q", "quit", "Quitter")]
 
     def __init__(self, app_name: str | None = None) -> None:
         super().__init__()
-        self._app_name = app_name or default_app_name()
-        self.logs: list[str] = []
+        self._default_name = app_name or default_app_name()
+        self._logs: list[str] = []
 
     def compose(self) -> ComposeResult:
-        yield Header()
-        with Vertical(id="panel"):
-            yield Label("frappe_dokploy TUI — init & aide bench", id="title")
-            with Horizontal(id="actions"):
-                yield Button("Init (copie + replace)", id="btn-init", variant="success")
-                yield Button("Voir commandes bench", id="btn-bench", variant="primary")
+        yield Header(show_clock=False)
+        with Vertical(id="main"):
+
+            # ── Section : App ──────────────────────────────────────────
+            yield Label("APP", classes="section-title")
+            with Vertical(classes="section-box"):
+                with Horizontal(classes="field-row"):
+                    yield Label("Nom de l'app", classes="field-label")
+                    yield Input(
+                        self._default_name,
+                        id="app-input",
+                        classes="field-input",
+                    )
+                with Horizontal(classes="field-row"):
+                    yield Label("Frappe branch", classes="field-label")
+                    yield Input(
+                        "version-15",
+                        id="branch-input",
+                        classes="field-input",
+                    )
+
+            # ── Section : DevContainer ─────────────────────────────────
+            yield Label("DEVCONTAINER", classes="section-title")
+            with Vertical(classes="section-box"):
+                with Horizontal(classes="field-row"):
+                    yield Label("Site name", classes="field-label")
+                    yield Input(
+                        "development.localhost",
+                        id="site-input",
+                        classes="field-input",
+                    )
+                with Horizontal(classes="field-row"):
+                    yield Label("Admin password", classes="field-label")
+                    yield Input(
+                        "admin",
+                        password=True,
+                        id="admin-input",
+                        classes="field-input",
+                    )
+                with Horizontal(classes="field-row"):
+                    yield Label("DB root password", classes="field-label")
+                    yield Input(
+                        "123",
+                        password=True,
+                        id="db-input",
+                        classes="field-input",
+                    )
+
+            # ── Boutons d'action ───────────────────────────────────────
+            with Horizontal(id="btn-row"):
+                yield Button("▶  Lancer l'Init", id="btn-init", variant="success")
+                yield Button("   Commandes bench", id="btn-bench", variant="primary")
                 yield Button("Quitter", id="btn-quit", variant="error")
-            with Grid(id="form"):
-                yield Label("Nom de l'app")
-                yield Input(
-                    self._app_name,
-                    placeholder=f"{self._app_name} (auto si vide)",
-                    id="app-input",
-                )
-                yield Label("Frappe branch")
-                yield Input("version-15", placeholder="version-15", id="branch-input")
-                yield Label("Site name")
-                yield Input(
-                    "development.localhost",
-                    placeholder="development.localhost",
-                    id="site-input",
-                )
-                yield Label("Admin password")
-                yield Input("admin", placeholder="admin", password=True, id="admin-input")
-                yield Label("DB root password")
-                yield Input("123", placeholder="123", password=True, id="db-input")
-            yield Static("Logs :", id="log-label")
-            yield TextArea("", id="logs", read_only=True, theme="monokai")
+
+            # ── Sortie ────────────────────────────────────────────────
+            yield Label("RÉSULTAT", id="output-title")
+            yield TextArea("En attente…", id="output", read_only=True, theme="monokai")
+
+            yield Label("Tab = champ suivant  •  q = quitter", id="hint")
+
         yield Footer()
+
+    # ── Événements ────────────────────────────────────────────────────
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "btn-init":
-            self.do_init()
+            self._do_init()
         elif event.button.id == "btn-bench":
-            self.show_bench()
+            self._show_bench()
         elif event.button.id == "btn-quit":
             self.exit()
 
-    def write_logs(self, lines: list[str]) -> None:
-        if not lines:
-            return
-        self.logs.extend(lines)
-        ta = self.query_one("#logs", TextArea)
-        ta.load_text("\n".join(self.logs))
+    # ── Helpers ───────────────────────────────────────────────────────
+
+    def _val(self, widget_id: str, fallback: str = "") -> str:
+        return self.query_one(f"#{widget_id}", Input).value.strip() or fallback
+
+    def _push(self, lines: list[str]) -> None:
+        self._logs.extend(lines)
+        ta = self.query_one("#output", TextArea)
+        ta.load_text("\n".join(self._logs))
         ta.scroll_end()
 
-    def app_name(self) -> str:
-        return self.query_one("#app-input", Input).value.strip() or default_app_name()
+    def _do_init(self) -> None:
+        name    = self._val("app-input",   self._default_name)
+        branch  = self._val("branch-input", "version-15")
+        site    = self._val("site-input",   "development.localhost")
+        admin   = self.query_one("#admin-input", Input).value or "admin"
+        db      = self.query_one("#db-input",    Input).value or "123"
 
-    def branch(self) -> str:
-        return self.query_one("#branch-input", Input).value.strip() or "version-15"
-
-    def site(self) -> str:
-        return self.query_one("#site-input", Input).value.strip() or "development.localhost"
-
-    def admin_pw(self) -> str:
-        return self.query_one("#admin-input", Input).value or "admin"
-
-    def db_pw(self) -> str:
-        return self.query_one("#db-input", Input).value or "123"
-
-    def do_init(self) -> None:
-        name = self.app_name()
+        self._logs.clear()
+        self._push([f"── Init : {name} ──"])
         try:
-            log_copy = copy_templates()
-            log_replace = replace_my_app(name)
-            log_dev = replace_dev_vars(self.branch(), self.site(), self.admin_pw(), self.db_pw())
-            self.write_logs([f"[ok] Init terminé pour {name}"] + log_copy + log_replace + log_dev)
-        except Exception as exc:  # pragma: no cover
-            self.write_logs([f"[err] {exc}"])
+            self._push(copy_templates())
+            self._push(replace_my_app(name))
+            self._push(replace_dev_vars(branch, site, admin, db))
+            self._push([f"", f"✅  Init terminé pour « {name} »"])
+        except Exception as exc:
+            self._push([f"❌  Erreur : {exc}"])
 
-    def show_bench(self) -> None:
-        cmds = bench_commands(self.app_name())
-        self.write_logs(
-            ["[bench] commandes à exécuter dans le devcontainer :", cmds.strip()]
-        )
+    def _show_bench(self) -> None:
+        name = self._val("app-input", self._default_name)
+        self._logs.clear()
+        self._push(["── Commandes bench ──", bench_commands(name)])
 
 
 def main() -> None:
-    app = FDApp()
-    app.run()
+    FDApp().run()
 
 
 if __name__ == "__main__":
