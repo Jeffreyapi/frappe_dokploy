@@ -10,7 +10,7 @@ from pathlib import Path
 
 try:
     from textual.app import App, ComposeResult
-    from textual.containers import Grid, Horizontal, Vertical
+    from textual.containers import Grid, Horizontal, VerticalScroll
     from textual.widgets import Button, Footer, Header, Input, Label, TextArea
 except ImportError:
     raise SystemExit(
@@ -195,7 +195,7 @@ class FDApp(App):
     }
     """
 
-    BINDINGS = [("q", "quit", "Quitter")]
+    BINDINGS = [("escape", "quit", "Quitter")]
 
     def __init__(self, app_name: str | None = None) -> None:
         super().__init__()
@@ -204,7 +204,7 @@ class FDApp(App):
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=False)
-        with Vertical(id="main"):
+        with VerticalScroll(id="main"):
 
             # ── Section APP ───────────────────────────────────────────
             yield Label("APP", classes="section-label")
@@ -218,15 +218,15 @@ class FDApp(App):
             yield Label("INFOS  (bench new-app)", classes="section-label")
             with Grid(classes="form-grid"):
                 yield Label("App title")
-                yield Input("My App", id="title-input")
+                yield Input(self._default_name, id="title-input")
                 yield Label("Description")
-                yield Input("My Frappe application", id="desc-input")
+                yield Input(self._default_name, id="desc-input")
                 yield Label("Publisher")
-                yield Input("My Company", id="publisher-input")
+                yield Input("EasyTalents", id="publisher-input")
                 yield Label("Email")
-                yield Input("admin@example.com", id="email-input")
+                yield Input("admin@easytalents.fr", id="email-input")
                 yield Label("Licence")
-                yield Input("mit", id="license-input")
+                yield Input("apache-2.0", id="license-input")
 
             # ── Section DEVCONTAINER ──────────────────────────────────
             yield Label("DEVCONTAINER", classes="section-label")
@@ -246,7 +246,7 @@ class FDApp(App):
 
             # ── Résultat ──────────────────────────────────────────────
             yield TextArea("En attente…", id="output", read_only=True, theme="monokai")
-            yield Label("Tab = champ suivant  •  q = quitter", id="hint")
+            yield Label("Tab = champ suivant  •  Échap = quitter", id="hint")
 
         yield Footer()
 
@@ -274,11 +274,11 @@ class FDApp(App):
     def _do_init(self) -> None:
         name      = self._val("app-input",      self._default_name)
         branch    = self._val("branch-input",    "version-15")
-        title     = self._val("title-input",     "My App")
-        desc      = self._val("desc-input",      "My Frappe application")
-        publisher = self._val("publisher-input",  "My Company")
-        email     = self._val("email-input",      "admin@example.com")
-        license_  = self._val("license-input",    "mit")
+        title     = self._val("title-input",     self._default_name)
+        desc      = self._val("desc-input",      self._default_name)
+        publisher = self._val("publisher-input",  "EasyTalents")
+        email     = self._val("email-input",      "admin@easytalents.fr")
+        license_  = self._val("license-input",    "apache-2.0")
         site      = self._val("site-input",       "development.localhost")
         admin     = self.query_one("#admin-input", Input).value or "admin"
         db        = self.query_one("#db-input",    Input).value or "123"
