@@ -2,176 +2,267 @@
 set -euo pipefail
 
 # =============================================================================
-#  devcontainer-post-create.sh
-#  Exécuté une seule fois après la création du conteneur.
+#  devcontainer-post-create.sh  —  IDEMPOTENT
 #
-#  Ce script :
-#    1. Démarre MariaDB 10.6 et Redis (services système)
-#    2. Installe uv + frappe-bench
-#    3. Initialise le bench avec frappe version-15
-#    4. Installe les apps publiques listées dans apps.json (ex: ERPNext)
-#    5. Installe l'app locale en mode ÉDITABLE (symlink → pip install -e)
-#       → les modifications dans VS Code sont immédiatement actives dans le bench
-#    6. Crée le site Frappe en mode développeur
+#  Peut être lancé plusieurs fois sans danger.
+#  Chaque étape vérifie son propre état avant d'agir.
 #
-#  Adapter : remplacer MY_APP par le nom de l'application
+#  Étapes :
+#    1.  MariaDB + Redis
+#    2.  uv + frappe-bench (CLI)
+#    3.  bench init (frappe)
+#    4.  Config Redis/MariaDB dans bench
+#    5.  Apps publiques depuis apps.json
+#    6.  Scaffold de MY_APP via bench new-app (non-interactif)
+#    7.  Copie workspace + symlink + pip install -e
+#    8.  Création du site
+#    9.  Installation des apps sur le site
+#    10. Finalisation
+#
+#  Variables générées par le TUI frappe_dokploy — ne pas éditer à la main.
 # =============================================================================
 
-# ── Variables — adapter MY_APP ────────────────────────────────────────────────
-WORKSPACE="/workspaces/MY_APP"
+# ── Variables ─────────────────────────────────────────────────────────────────
 APP_NAME="MY_APP"
+WORKSPACE="/workspaces/MY_APP"
 BENCH_DIR="$HOME/frappe-bench"
+
+# App metadata (bench new-app)
+APP_TITLE="My App"
+APP_DESCRIPTION="My Frappe application"
+APP_PUBLISHER="My Company"
+APP_EMAIL="admin@example.com"
+APP_LICENSE="mit"
+
+# Environnement de développement
 FRAPPE_BRANCH="version-15"
 SITE_NAME="development.localhost"
 DB_ROOT_PASSWORD="123"
 ADMIN_PASSWORD="admin"
 
-log() { echo "[devcontainer $(date +'%T')] $*"; }
+# ── Helpers ───────────────────────────────────────────────────────────────────
+log()  { echo "[devcontainer $(date +'%T')] $*"; }
+ok()   { echo "[devcontainer $(date +'%T')] ✓ $*"; }
+skip() { echo "[devcontainer $(date +'%T')] — skip: $*"; }
+
 export PATH="$HOME/.local/bin:$PATH"
 
-# ── 1. MariaDB 10.6 ───────────────────────────────────────────────────────────
-log "Démarrage de MariaDB 10.6..."
-sudo service mariadb start || log "MariaDB déjà lancé"
+# ═══════════════════════════════════════════════════════════════════════════════
+# 1. MariaDB + Redis
+# ═══════════════════════════════════════════════════════════════════════════════
+log "Démarrage de MariaDB..."
+sudo service mariadb start 2>/dev/null || skip "MariaDB déjà lancé"
 
-log "Configuration du compte root MariaDB..."
-# Le heredoc SQL n'est PAS dans un contexte bash-variable-expansion,
-# on utilise une variable shell explicite pour le mot de passe.
-sudo mysql --connect-expired-password -u root <<-SQL || log "Root déjà configuré, on continue"
+# Configurer le mot de passe root seulement si nécessaire
+if mysql -u root -p"${DB_ROOT_PASSWORD}" -e "SELECT 1" >/dev/null 2>&1; then
+  skip "MariaDB root déjà configuré avec le bon mot de passe"
+else
+  log "Configuration du mot de passe root MariaDB..."
+  sudo mysql --connect-expired-password -u root <<-SQL || skip "Root déjà configuré"
 	ALTER USER 'root'@'localhost' IDENTIFIED BY '${DB_ROOT_PASSWORD}';
 	FLUSH PRIVILEGES;
 SQL
+fi
 
-# ── 2. Redis ──────────────────────────────────────────────────────────────────
 log "Démarrage de Redis..."
-sudo service redis-server start || log "Redis déjà lancé"
+sudo service redis-server start 2>/dev/null || skip "Redis déjà lancé"
 
-# ── 3. uv + frappe-bench ──────────────────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════════════════════════
+# 2. uv + frappe-bench CLI
+# ═══════════════════════════════════════════════════════════════════════════════
 if ! command -v uv >/dev/null 2>&1; then
   log "Installation de uv..."
   curl -LsSf https://astral.sh/uv/install.sh | sh
   export PATH="$HOME/.local/bin:$PATH"
+else
+  skip "uv $(uv --version)"
 fi
 
 if ! command -v bench >/dev/null 2>&1; then
   log "Installation de frappe-bench via uv..."
   uv tool install frappe-bench
   export PATH="$HOME/.local/bin:$PATH"
-fi
-log "bench : $(bench --version 2>/dev/null || echo 'ok')"
-
-# ── Si le bench existe déjà (relance du conteneur), on s'arrête ───────────────
-if [ -d "$BENCH_DIR" ]; then
-  log "Bench existant détecté dans $BENCH_DIR — skip init."
-  log "Pour relancer depuis zéro : rm -rf $BENCH_DIR && bash .devcontainer/devcontainer-post-create.sh"
-  exit 0
+else
+  skip "bench $(bench --version 2>/dev/null)"
 fi
 
-# ── 4. bench init (frappe seulement) ─────────────────────────────────────────
-log "Initialisation du bench frappe-bench (frappe $FRAPPE_BRANCH)..."
-bench init \
-  --frappe-branch "$FRAPPE_BRANCH" \
-  --skip-redis-config-generation \
-  "$BENCH_DIR"
+# ═══════════════════════════════════════════════════════════════════════════════
+# 3. bench init
+# ═══════════════════════════════════════════════════════════════════════════════
+if [ ! -d "$BENCH_DIR" ]; then
+  log "Initialisation du bench (frappe $FRAPPE_BRANCH)..."
+  bench init \
+    --frappe-branch "$FRAPPE_BRANCH" \
+    --skip-redis-config-generation \
+    "$BENCH_DIR"
+else
+  skip "bench déjà initialisé dans $BENCH_DIR"
+fi
 
 cd "$BENCH_DIR"
 
-# ── 5. Configurer Redis (instance unique en dev) + MariaDB ────────────────────
-log "Configuration Redis & MariaDB dans common_site_config..."
-bench set-config -g  db_host        "127.0.0.1"
-bench set-config -gp db_port        3306
-bench set-config -g  redis_cache    "redis://127.0.0.1:6379"
-bench set-config -g  redis_queue    "redis://127.0.0.1:6379"
-bench set-config -g  redis_socketio "redis://127.0.0.1:6379"
-bench set-config -gp developer_mode 1
+# ═══════════════════════════════════════════════════════════════════════════════
+# 4. Config Redis + MariaDB dans common_site_config
+# ═══════════════════════════════════════════════════════════════════════════════
+if ! grep -q '"db_host"' sites/common_site_config.json 2>/dev/null; then
+  log "Configuration Redis & MariaDB dans common_site_config..."
+  bench set-config -g  db_host        "127.0.0.1"
+  bench set-config -gp db_port        3306
+  bench set-config -g  redis_cache    "redis://127.0.0.1:6379"
+  bench set-config -g  redis_queue    "redis://127.0.0.1:6379"
+  bench set-config -g  redis_socketio "redis://127.0.0.1:6379"
+  bench set-config -gp developer_mode 1
+else
+  skip "common_site_config déjà configuré"
+fi
 
-# ── 6. Apps publiques depuis apps.json (ex : ERPNext) ────────────────────────
-# Les apps dont l'URL contient GH_PAT sont privées et seront gérées via
-# le workspace local (étape 7). Les apps publiques (GitHub public) sont
-# clonées normalement via bench get-app.
+# ═══════════════════════════════════════════════════════════════════════════════
+# 5. Apps publiques depuis apps.json
+# ═══════════════════════════════════════════════════════════════════════════════
 log "Lecture de apps.json pour les apps publiques..."
-python3 - "$WORKSPACE" <<'PYEOF'
+python3 - "$WORKSPACE" "$BENCH_DIR" <<'PYEOF'
 import json, subprocess, sys, os
+from pathlib import Path
 
-workspace = sys.argv[1]
-apps_file = os.path.join(workspace, "apps.json")
+workspace  = sys.argv[1]
+bench_dir  = sys.argv[2]
+apps_file  = Path(workspace) / "apps.json"
 
-if not os.path.exists(apps_file):
+if not apps_file.exists():
     print(f"[skip] {apps_file} introuvable")
     sys.exit(0)
 
-apps = json.load(open(apps_file))
+apps = json.loads(apps_file.read_text())
 for app in apps:
-    url = app["url"]
+    url    = app["url"]
     branch = app.get("branch", "main")
-    # Ignorer les apps privées (URL avec token GH_PAT = l'app du workspace)
     if "${GH_PAT}" in url or "GH_PAT" in url:
         name = url.rstrip("/").split("/")[-1].replace(".git", "")
-        print(f"[skip] app privée '{name}' → sera installée depuis le workspace local")
+        print(f"[skip] app privée '{name}' — installée depuis le workspace")
+        continue
+    app_name = url.rstrip("/").split("/")[-1].replace(".git", "")
+    if (Path(bench_dir) / "apps" / app_name).exists():
+        print(f"[skip] {app_name} déjà présent")
         continue
     print(f"[get-app] {url}  (branch: {branch})")
     subprocess.run(["bench", "get-app", "--branch", branch, url], check=True)
 PYEOF
 
-# ── 7. App locale en mode éditable (Option B) ─────────────────────────────────
-# Un symlink pointe $BENCH_DIR/apps/MY_APP → /workspaces/MY_APP
-# pip install -e enregistre l'app dans le venv bench sans copier les fichiers.
-# Résultat : toute modification dans VS Code est immédiatement reflétée.
-log "Installation de $APP_NAME en mode éditable depuis le workspace local..."
-ln -sf "$WORKSPACE" "$BENCH_DIR/apps/$APP_NAME"
-"$BENCH_DIR/env/bin/pip" install -e "$BENCH_DIR/apps/$APP_NAME"
+# ═══════════════════════════════════════════════════════════════════════════════
+# 6. Scaffold de l'app (bench new-app non-interactif)
+#    Seulement si le workspace n'a pas encore de pyproject.toml / setup.py
+# ═══════════════════════════════════════════════════════════════════════════════
+if [ ! -f "$WORKSPACE/pyproject.toml" ] && [ ! -f "$WORKSPACE/setup.py" ]; then
+  log "Scaffold de $APP_NAME via bench new-app (non-interactif)..."
 
-# ── 8. Créer le site Frappe ───────────────────────────────────────────────────
-log "Création du site $SITE_NAME..."
-bench new-site \
-  --db-root-username root \
-  --db-root-password "$DB_ROOT_PASSWORD" \
-  --mariadb-user-host-login-scope='%' \
-  --admin-password "$ADMIN_PASSWORD" \
-  "$SITE_NAME"
+  # Supprimer le symlink s'il existe déjà (bench new-app a besoin du slot libre)
+  [ -L "$BENCH_DIR/apps/$APP_NAME" ] && rm "$BENCH_DIR/apps/$APP_NAME"
+  [ -d "$BENCH_DIR/apps/$APP_NAME" ] && rm -rf "$BENCH_DIR/apps/$APP_NAME"
 
-# ── 9. Installer les apps sur le site ─────────────────────────────────────────
-log "Installation des apps publiques sur le site..."
-python3 - "$WORKSPACE" "$SITE_NAME" <<'PYEOF'
-import json, subprocess, sys, os
+  # Réponses aux prompts : titre, description, publisher, email, licence, GitHub workflow
+  printf "%s\n%s\n%s\n%s\n%s\nN\n" \
+    "$APP_TITLE" \
+    "$APP_DESCRIPTION" \
+    "$APP_PUBLISHER" \
+    "$APP_EMAIL" \
+    "$APP_LICENSE" \
+    | bench new-app "$APP_NAME"
 
-workspace = sys.argv[1]
-site_name = sys.argv[2]
-apps_file = os.path.join(workspace, "apps.json")
+  log "Copie des fichiers générés dans le workspace $WORKSPACE..."
+  cp -a "$BENCH_DIR/apps/$APP_NAME/." "$WORKSPACE/"
+  rm -rf "$BENCH_DIR/apps/$APP_NAME"
+  ok "Scaffold terminé"
+else
+  skip "App déjà scaffoldée dans $WORKSPACE (pyproject.toml ou setup.py présent)"
+fi
 
-if not os.path.exists(apps_file):
+# ═══════════════════════════════════════════════════════════════════════════════
+# 7. Symlink workspace → bench/apps + pip install -e
+# ═══════════════════════════════════════════════════════════════════════════════
+if [ ! -L "$BENCH_DIR/apps/$APP_NAME" ]; then
+  log "Création du symlink apps/$APP_NAME → $WORKSPACE"
+  ln -sf "$WORKSPACE" "$BENCH_DIR/apps/$APP_NAME"
+else
+  skip "Symlink apps/$APP_NAME déjà présent"
+fi
+
+log "pip install -e (mode éditable)..."
+"$BENCH_DIR/env/bin/pip" install -e "$BENCH_DIR/apps/$APP_NAME" --quiet
+ok "pip install -e OK"
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 8. Création du site
+# ═══════════════════════════════════════════════════════════════════════════════
+if [ ! -d "$BENCH_DIR/sites/$SITE_NAME" ]; then
+  log "Création du site $SITE_NAME..."
+  bench new-site \
+    --db-root-username root \
+    --db-root-password "$DB_ROOT_PASSWORD" \
+    --mariadb-user-host-login-scope='%' \
+    --admin-password "$ADMIN_PASSWORD" \
+    "$SITE_NAME"
+  ok "Site $SITE_NAME créé"
+else
+  skip "Site $SITE_NAME déjà existant"
+fi
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 9. Installation des apps sur le site
+# ═══════════════════════════════════════════════════════════════════════════════
+log "Installation des apps sur le site $SITE_NAME..."
+python3 - "$WORKSPACE" "$SITE_NAME" "$BENCH_DIR" <<'PYEOF'
+import json, subprocess, sys
+from pathlib import Path
+
+workspace  = sys.argv[1]
+site_name  = sys.argv[2]
+bench_dir  = sys.argv[3]
+apps_file  = Path(workspace) / "apps.json"
+
+if not apps_file.exists():
     sys.exit(0)
 
-apps = json.load(open(apps_file))
+# Apps déjà installées sur le site
+installed_file = Path(bench_dir) / "sites" / site_name / "apps.txt"
+installed = set(installed_file.read_text().splitlines()) if installed_file.exists() else set()
+
+apps = json.loads(apps_file.read_text())
 for app in apps:
     url = app["url"]
     if "${GH_PAT}" in url or "GH_PAT" in url:
         continue
     app_name = url.rstrip("/").split("/")[-1].replace(".git", "")
+    if app_name in installed:
+        print(f"[skip] {app_name} déjà installé sur {site_name}")
+        continue
     print(f"[install-app] {app_name}")
-    subprocess.run(
-        ["bench", "--site", site_name, "install-app", app_name],
-        check=True
-    )
+    subprocess.run(["bench", "--site", site_name, "install-app", app_name], check=True)
 PYEOF
 
-log "Installation de l'app locale : $APP_NAME"
-bench --site "$SITE_NAME" install-app "$APP_NAME"
+# App locale
+INSTALLED_APPS="$BENCH_DIR/sites/$SITE_NAME/apps.txt"
+if ! grep -qx "$APP_NAME" "$INSTALLED_APPS" 2>/dev/null; then
+  log "Installation de $APP_NAME sur $SITE_NAME..."
+  bench --site "$SITE_NAME" install-app "$APP_NAME"
+  ok "$APP_NAME installé"
+else
+  skip "$APP_NAME déjà installé sur $SITE_NAME"
+fi
 
-# ── 10. Finalisation ──────────────────────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════════════════════════
+# 10. Finalisation
+# ═══════════════════════════════════════════════════════════════════════════════
 bench --site "$SITE_NAME" clear-cache
 
 log ""
 log "══════════════════════════════════════════════════════════"
-log "  ✓ Devcontainer prêt !"
+log "  ✓ Environnement prêt !"
 log ""
-log "  Démarrer le serveur de développement :"
+log "  Lancer le serveur :"
 log "    cd ~/frappe-bench && bench start"
 log ""
-log "  URL   : http://development.localhost:8000"
+log "  URL   : http://${SITE_NAME}:8000"
 log "  Login : Administrator / ${ADMIN_PASSWORD}"
 log ""
-log "  Mode éditable actif :"
-log "  Les fichiers dans VS Code (${WORKSPACE}) sont"
-log "  directement reflétés dans le bench — pas de redémarrage nécessaire"
-log "  pour les changements Python (sauf hooks.py)."
+log "  Mode éditable : modifications VS Code → bench sans redémarrage"
 log "══════════════════════════════════════════════════════════"

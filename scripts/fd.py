@@ -5,7 +5,6 @@ TUI Textual pour automatiser les étapes d'init d'une app Frappe avec le submodu
 
 from __future__ import annotations
 
-import os
 import shutil
 from pathlib import Path
 
@@ -18,22 +17,21 @@ except ImportError:
         "Textual n'est pas installé. Installez-le avec :\n\n  pip install textual\n"
     )
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT      = Path(__file__).resolve().parent.parent
 TEMPLATES = ROOT / "templates"
 
 COPY_MAP = {
-    TEMPLATES / "docker-compose.app.yml": Path("docker-compose.yml"),
-    TEMPLATES / ".env.app.example": Path(".env.example"),
-    TEMPLATES / "Makefile": Path("Makefile"),
-    TEMPLATES / "publish.app.yml": Path(".github/workflows/publish.yml"),
-    TEMPLATES / ".devcontainer" / "Dockerfile": Path(".devcontainer/Dockerfile"),
-    TEMPLATES / ".devcontainer" / "devcontainer.json": Path(".devcontainer/devcontainer.json"),
-    TEMPLATES / ".devcontainer" / "devcontainer-post-create.sh": Path(
-        ".devcontainer/devcontainer-post-create.sh"
-    ),
+    TEMPLATES / "docker-compose.app.yml"                       : Path("docker-compose.yml"),
+    TEMPLATES / ".env.app.example"                             : Path(".env.example"),
+    TEMPLATES / "Makefile"                                     : Path("Makefile"),
+    TEMPLATES / "publish.app.yml"                              : Path(".github/workflows/publish.yml"),
+    TEMPLATES / ".devcontainer" / "Dockerfile"                 : Path(".devcontainer/Dockerfile"),
+    TEMPLATES / ".devcontainer" / "devcontainer.json"          : Path(".devcontainer/devcontainer.json"),
+    TEMPLATES / ".devcontainer" / "devcontainer-post-create.sh": Path(".devcontainer/devcontainer-post-create.sh"),
 }
 
-TARGETS_REPLACE = [
+# Fichiers dans lesquels MY_APP est remplacé
+TARGETS_APP_NAME = [
     Path("docker-compose.yml"),
     Path(".env.example"),
     Path(".github/workflows/publish.yml"),
@@ -41,6 +39,11 @@ TARGETS_REPLACE = [
     Path(".devcontainer/devcontainer-post-create.sh"),
 ]
 
+# Fichier unique contenant toutes les variables de config
+POST_CREATE = Path(".devcontainer/devcontainer-post-create.sh")
+
+
+# ── Fonctions de transformation ───────────────────────────────────────────────
 
 def default_app_name() -> str:
     return Path.cwd().name
@@ -57,16 +60,15 @@ def copy_templates() -> list[str]:
         ensure_parents(dst)
         shutil.copy2(src, dst)
         logs.append(f"  ✓  {dst}")
-    dst = Path(".devcontainer/devcontainer-post-create.sh")
-    if dst.exists():
-        dst.chmod(dst.stat().st_mode | 0o111)
+    if POST_CREATE.exists():
+        POST_CREATE.chmod(POST_CREATE.stat().st_mode | 0o111)
         logs.append("  ✓  chmod +x devcontainer-post-create.sh")
     return logs
 
 
-def replace_my_app(app_name: str) -> list[str]:
+def replace_app_name(app_name: str) -> list[str]:
     logs: list[str] = []
-    for file in TARGETS_REPLACE:
+    for file in TARGETS_APP_NAME:
         if not file.exists():
             continue
         content = file.read_text(encoding="utf-8")
@@ -77,42 +79,48 @@ def replace_my_app(app_name: str) -> list[str]:
     return logs
 
 
-def replace_dev_vars(branch: str, site: str, admin_pw: str, db_pw: str) -> list[str]:
-    file = Path(".devcontainer/devcontainer-post-create.sh")
-    if not file.exists():
+def replace_script_vars(
+    branch: str, site: str, admin_pw: str, db_pw: str,
+    title: str, description: str, publisher: str, email: str, license_: str,
+) -> list[str]:
+    """Injecte toutes les variables dans devcontainer-post-create.sh."""
+    if not POST_CREATE.exists():
         return ["  ⚠  devcontainer-post-create.sh introuvable"]
-    text = file.read_text(encoding="utf-8")
+
+    text = POST_CREATE.read_text(encoding="utf-8")
+
     replacements = {
-        'FRAPPE_BRANCH="version-15"': f'FRAPPE_BRANCH="{branch}"',
-        'SITE_NAME="development.localhost"': f'SITE_NAME="{site}"',
-        'DB_ROOT_PASSWORD="123"': f'DB_ROOT_PASSWORD="{db_pw}"',
-        'ADMIN_PASSWORD="admin"': f'ADMIN_PASSWORD="{admin_pw}"',
+        # Environnement dev
+        'FRAPPE_BRANCH="version-15"'          : f'FRAPPE_BRANCH="{branch}"',
+        'SITE_NAME="development.localhost"'   : f'SITE_NAME="{site}"',
+        'DB_ROOT_PASSWORD="123"'              : f'DB_ROOT_PASSWORD="{db_pw}"',
+        'ADMIN_PASSWORD="admin"'              : f'ADMIN_PASSWORD="{admin_pw}"',
+        # Métadonnées bench new-app
+        'APP_TITLE="My App"'                  : f'APP_TITLE="{title}"',
+        'APP_DESCRIPTION="My Frappe application"': f'APP_DESCRIPTION="{description}"',
+        'APP_PUBLISHER="My Company"'          : f'APP_PUBLISHER="{publisher}"',
+        'APP_EMAIL="admin@example.com"'       : f'APP_EMAIL="{email}"',
+        'APP_LICENSE="mit"'                   : f'APP_LICENSE="{license_}"',
     }
     for needle, repl in replacements.items():
         text = text.replace(needle, repl)
-    file.write_text(text, encoding="utf-8")
+
+    POST_CREATE.write_text(text, encoding="utf-8")
+
     return [
-        f"  ✓  FRAPPE_BRANCH → {branch}",
-        f"  ✓  SITE_NAME → {site}",
+        f"  ✓  FRAPPE_BRANCH    → {branch}",
+        f"  ✓  SITE_NAME        → {site}",
         "  ✓  DB_ROOT_PASSWORD → (défini)",
-        "  ✓  ADMIN_PASSWORD → (défini)",
+        "  ✓  ADMIN_PASSWORD   → (défini)",
+        f"  ✓  APP_TITLE        → {title}",
+        f"  ✓  APP_DESCRIPTION  → {description or '(vide)'}",
+        f"  ✓  APP_PUBLISHER    → {publisher}",
+        f"  ✓  APP_EMAIL        → {email}",
+        f"  ✓  APP_LICENSE      → {license_}",
     ]
 
 
-def bench_commands(app_name: str) -> str:
-    return f"""# À exécuter dans le devcontainer / Codespaces
-cd ~/frappe-bench
-bench new-app {app_name}
-
-# Ramener le code dans le repo + symlink pour hot-reload
-cp -a apps/{app_name}/. /workspaces/{app_name}/
-rm -rf apps/{app_name}
-ln -s /workspaces/{app_name} apps/{app_name}
-
-# Installer l'app sur le site de dev
-bench --site development.localhost install-app {app_name}
-bench start  # http://development.localhost:8000"""
-
+# ── TUI ───────────────────────────────────────────────────────────────────────
 
 class FDApp(App):
     CSS = """
@@ -122,50 +130,50 @@ class FDApp(App):
     }
 
     #main {
-        width: 76;
+        width: 80;
         margin-top: 1;
     }
 
-    /* ── Formulaire en grille 2 colonnes ── */
-    #form {
+    /* ── Titres de section ── */
+    .section-label {
+        color: #58a6ff;
+        text-style: bold;
+        height: 1;
+        margin: 1 0 0 1;
+    }
+
+    /* ── Grille formulaire 2 colonnes ── */
+    .form-grid {
         grid-size: 2;
         grid-columns: 20 1fr;
-        grid-rows: 3 3 3 3 3;
         border: solid #30363d;
-        padding: 1 2;
-        margin-bottom: 1;
+        padding: 0 2 1 2;
+        margin-bottom: 0;
         height: auto;
     }
 
-    #form Label {
+    .form-grid Label {
         color: #8b949e;
         content-align: left middle;
         height: 3;
         padding: 0 1;
     }
 
-    #form Input {
+    .form-grid Input {
         height: 3;
         background: #161b22;
         border: tall #30363d;
         color: #e6edf3;
     }
 
-    #form Input:focus {
+    .form-grid Input:focus {
         border: tall #58a6ff;
-    }
-
-    /* ── Séparateur visuel dans le grid ── */
-    .sep {
-        column-span: 2;
-        height: 1;
-        color: #21262d;
-        background: #21262d;
     }
 
     /* ── Boutons ── */
     #btn-row {
         height: 3;
+        margin-top: 1;
         margin-bottom: 1;
     }
 
@@ -175,7 +183,7 @@ class FDApp(App):
 
     /* ── Résultat ── */
     #output {
-        height: 14;
+        height: 12;
         border: solid #30363d;
         background: #0d1117;
     }
@@ -198,14 +206,31 @@ class FDApp(App):
         yield Header(show_clock=False)
         with Vertical(id="main"):
 
-            # ── Formulaire ────────────────────────────────────────────
-            with Grid(id="form"):
-                # APP
+            # ── Section APP ───────────────────────────────────────────
+            yield Label("APP", classes="section-label")
+            with Grid(classes="form-grid"):
                 yield Label("Nom de l'app")
                 yield Input(self._default_name, id="app-input")
                 yield Label("Frappe branch")
                 yield Input("version-15", id="branch-input")
-                # DEVCONTAINER
+
+            # ── Section INFOS (bench new-app) ─────────────────────────
+            yield Label("INFOS  (bench new-app)", classes="section-label")
+            with Grid(classes="form-grid"):
+                yield Label("App title")
+                yield Input("My App", id="title-input")
+                yield Label("Description")
+                yield Input("My Frappe application", id="desc-input")
+                yield Label("Publisher")
+                yield Input("My Company", id="publisher-input")
+                yield Label("Email")
+                yield Input("admin@example.com", id="email-input")
+                yield Label("Licence")
+                yield Input("mit", id="license-input")
+
+            # ── Section DEVCONTAINER ──────────────────────────────────
+            yield Label("DEVCONTAINER", classes="section-label")
+            with Grid(classes="form-grid"):
                 yield Label("Site name")
                 yield Input("development.localhost", id="site-input")
                 yield Label("Admin password")
@@ -247,26 +272,43 @@ class FDApp(App):
         ta.scroll_end()
 
     def _do_init(self) -> None:
-        name    = self._val("app-input",   self._default_name)
-        branch  = self._val("branch-input", "version-15")
-        site    = self._val("site-input",   "development.localhost")
-        admin   = self.query_one("#admin-input", Input).value or "admin"
-        db      = self.query_one("#db-input",    Input).value or "123"
+        name      = self._val("app-input",      self._default_name)
+        branch    = self._val("branch-input",    "version-15")
+        title     = self._val("title-input",     "My App")
+        desc      = self._val("desc-input",      "My Frappe application")
+        publisher = self._val("publisher-input",  "My Company")
+        email     = self._val("email-input",      "admin@example.com")
+        license_  = self._val("license-input",    "mit")
+        site      = self._val("site-input",       "development.localhost")
+        admin     = self.query_one("#admin-input", Input).value or "admin"
+        db        = self.query_one("#db-input",    Input).value or "123"
 
         self._logs.clear()
-        self._push([f"── Init : {name} ──"])
+        self._push([f"── Init : {name} ──", ""])
         try:
+            self._push(["Copie des templates…"])
             self._push(copy_templates())
-            self._push(replace_my_app(name))
-            self._push(replace_dev_vars(branch, site, admin, db))
-            self._push([f"", f"✅  Init terminé pour « {name} »"])
+            self._push(["", "Remplacement MY_APP…"])
+            self._push(replace_app_name(name))
+            self._push(["", "Injection des variables…"])
+            self._push(replace_script_vars(branch, site, admin, db, title, desc, publisher, email, license_))
+            self._push(["", f"✅  Init terminé — lance le Codespace pour démarrer automatiquement."])
         except Exception as exc:
-            self._push([f"❌  Erreur : {exc}"])
+            self._push([f"", f"❌  Erreur : {exc}"])
 
     def _show_bench(self) -> None:
-        name = self._val("app-input", self._default_name)
         self._logs.clear()
-        self._push(["── Commandes bench ──", bench_commands(name)])
+        self._push([
+            "── Commandes manuelles (si besoin) ──",
+            "",
+            "  # Relancer le script de setup :",
+            f"  bash .devcontainer/devcontainer-post-create.sh",
+            "",
+            "  # Lancer le serveur de dev :",
+            f"  cd ~/frappe-bench && bench start",
+            "",
+            f"  # URL : http://development.localhost:8000",
+        ])
 
 
 def main() -> None:
