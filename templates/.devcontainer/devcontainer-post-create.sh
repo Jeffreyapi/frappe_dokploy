@@ -159,14 +159,29 @@ if [ ! -f "$WORKSPACE/pyproject.toml" ] && [ ! -f "$WORKSPACE/setup.py" ]; then
   [ -L "$BENCH_DIR/apps/$APP_NAME" ] && rm "$BENCH_DIR/apps/$APP_NAME"
   [ -d "$BENCH_DIR/apps/$APP_NAME" ] && rm -rf "$BENCH_DIR/apps/$APP_NAME"
 
-  # Réponses aux prompts : titre, description, publisher, email, licence, GitHub workflow
-  printf "%s\n%s\n%s\n%s\n%s\nN\n" \
-    "$APP_TITLE" \
-    "$APP_DESCRIPTION" \
-    "$APP_PUBLISHER" \
-    "$APP_EMAIL" \
-    "$APP_LICENSE" \
-    | bench new-app "$APP_NAME"
+  # Envoyer des lignes vides → bench utilise ses propres defaults calculés
+  # depuis le nom de l'app (plus robuste que passer nos valeurs qui peuvent
+  # échouer à la validation et décaler tout le stdin).
+  # Les métadonnées (title, publisher, email…) sont patchées juste après.
+  printf "\n\n\n\n\n\nN\n" | bench new-app "$APP_NAME"
+
+  log "Patch des métadonnées dans pyproject.toml / hooks.py..."
+  PYPROJECT="$BENCH_DIR/apps/$APP_NAME/pyproject.toml"
+  HOOKS="$BENCH_DIR/apps/$APP_NAME/$APP_NAME/hooks.py"
+
+  # pyproject.toml
+  if [ -f "$PYPROJECT" ]; then
+    sed -i "s/^name = .*/name = \"$APP_NAME\"/" "$PYPROJECT"
+  fi
+
+  # hooks.py — remplacer les valeurs bench new-app par les nôtres
+  if [ -f "$HOOKS" ]; then
+    sed -i "s/^app_title = .*/app_title = \"$APP_TITLE\"/"             "$HOOKS"
+    sed -i "s/^app_description = .*/app_description = \"$APP_DESCRIPTION\"/" "$HOOKS"
+    sed -i "s/^app_publisher = .*/app_publisher = \"$APP_PUBLISHER\"/"   "$HOOKS"
+    sed -i "s/^app_email = .*/app_email = \"$APP_EMAIL\"/"               "$HOOKS"
+    sed -i "s/^app_license = .*/app_license = \"$APP_LICENSE\"/"         "$HOOKS"
+  fi
 
   log "Copie des fichiers générés dans le workspace $WORKSPACE..."
   cp -a "$BENCH_DIR/apps/$APP_NAME/." "$WORKSPACE/"
