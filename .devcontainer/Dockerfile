@@ -20,7 +20,6 @@ RUN apt-get update && apt-get install -y software-properties-common && \
     python3.14 \
     python3.14-dev \
     python3.14-venv \
-    python3.14-distutils \
  && rm -rf /var/lib/apt/lists/*
 
 # ── Dépendances système ───────────────────────────────────────────────────────
