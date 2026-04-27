@@ -31,16 +31,24 @@ set -euo pipefail
 PROJECT_ROOT="${PWD}"
 
 # ── Charger .env si présent ───────────────────────────────────────────────────
-# Utilise grep pour ne sourcer que les lignes KEY=VALUE valides :
-#   - ignore les commentaires (#)
-#   - ignore les lignes vides
-#   - ignore les lignes sans = ou dont la clé n'est pas un identifiant valide
+# Extrait clé et valeur séparément — n'interprète jamais la valeur comme du code.
+# Gère : espaces dans les valeurs, commentaires inline, lignes vides, quotes.
 _load_env() {
   local file="$1"
-  set -a
-  # shellcheck disable=SC1091
-  source <(grep -E '^[A-Za-z_][A-Za-z0-9_]*=' "$file" | grep -v '^[[:space:]]*#')
-  set +a
+  local key value line
+  while IFS= read -r line || [ -n "$line" ]; do
+    # ignorer lignes vides et commentaires
+    [[ "$line" =~ ^[[:space:]]*$ ]]  && continue
+    [[ "$line" =~ ^[[:space:]]*#  ]] && continue
+    # n'accepter que KEY=... avec un identifiant valide
+    [[ "$line" =~ ^([A-Za-z_][A-Za-z0-9_]*)=(.*)$ ]] || continue
+    key="${BASH_REMATCH[1]}"
+    value="${BASH_REMATCH[2]}"
+    # retirer les guillemets englobants éventuels (" ou ')
+    value="${value%\"}"  ; value="${value#\"}"
+    value="${value%\'}"  ; value="${value#\'}"
+    export "$key"="$value"
+  done < "$file"
 }
 
 if [ -f "$PROJECT_ROOT/.env" ]; then
