@@ -1,11 +1,20 @@
 #!/usr/bin/env python
 """
-TUI Textual pour automatiser les étapes d'init d'une app Frappe avec le submodule frappe_dokploy.
+TUI frappe_dokploy — initialisation d'un repo d'app Frappe.
+
+Génère uniquement les 4 fichiers projet-spécifiques :
+  - .env.example               (toutes les variables dev + prod)
+  - apps.json                  (template avec ${GH_PAT})
+  - .devcontainer/devcontainer.json  (pointe vers le submodule)
+  - .github/workflows/publish.yml   (appelle le workflow réutilisable)
+
+Tout le reste (Dockerfile, docker-compose, scripts) vit dans le submodule
+et n'est jamais copié.
 """
 
 from __future__ import annotations
 
-import shutil
+import json
 from pathlib import Path
 
 try:
@@ -13,238 +22,238 @@ try:
     from textual.containers import Grid, Horizontal, VerticalScroll
     from textual.widgets import Button, Footer, Header, Input, Label, TextArea
 except ImportError:
-    raise SystemExit(
-        "Textual n'est pas installé. Installez-le avec :\n\n  pip install textual\n"
-    )
+    raise SystemExit("Textual n'est pas installé : pip install textual\n")
 
-ROOT      = Path(__file__).resolve().parent.parent
-TEMPLATES = ROOT / "templates"
-
-COPY_MAP = {
-    TEMPLATES / "docker-compose.app.yml"                       : Path("docker-compose.yml"),
-    TEMPLATES / ".env.app.example"                             : Path(".env.example"),
-    TEMPLATES / "Makefile"                                     : Path("Makefile"),
-    TEMPLATES / "publish.app.yml"                              : Path(".github/workflows/publish.yml"),
-    TEMPLATES / ".devcontainer" / "Dockerfile"                 : Path(".devcontainer/Dockerfile"),
-    TEMPLATES / ".devcontainer" / "devcontainer.json"          : Path(".devcontainer/devcontainer.json"),
-    TEMPLATES / ".devcontainer" / "devcontainer-post-create.sh": Path(".devcontainer/devcontainer-post-create.sh"),
-}
-
-# Fichiers dans lesquels MY_APP est remplacé
-TARGETS_APP_NAME = [
-    Path("docker-compose.yml"),
-    Path(".env.example"),
-    Path(".github/workflows/publish.yml"),
-    Path(".devcontainer/devcontainer.json"),
-    Path(".devcontainer/devcontainer-post-create.sh"),
-]
-
-# Fichier unique contenant toutes les variables de config
-POST_CREATE = Path(".devcontainer/devcontainer-post-create.sh")
+ROOT = Path(__file__).resolve().parent.parent
 
 
-# ── Fonctions de transformation ───────────────────────────────────────────────
+# ── Génération des fichiers ───────────────────────────────────────────────────
 
-def default_app_name() -> str:
-    return Path.cwd().name
-
-
-def ensure_parents(path: Path) -> None:
-    if path.parent != Path("."):
-        path.parent.mkdir(parents=True, exist_ok=True)
-
-
-def copy_templates() -> list[str]:
-    logs: list[str] = []
-    for src, dst in COPY_MAP.items():
-        ensure_parents(dst)
-        shutil.copy2(src, dst)
-        logs.append(f"  ✓  {dst}")
-    if POST_CREATE.exists():
-        POST_CREATE.chmod(POST_CREATE.stat().st_mode | 0o111)
-        logs.append("  ✓  chmod +x devcontainer-post-create.sh")
-    return logs
-
-
-def replace_app_name(app_name: str) -> list[str]:
-    logs: list[str] = []
-    for file in TARGETS_APP_NAME:
-        if not file.exists():
-            continue
-        content = file.read_text(encoding="utf-8")
-        if "MY_APP" not in content:
-            continue
-        file.write_text(content.replace("MY_APP", app_name), encoding="utf-8")
-        logs.append(f"  ✓  MY_APP → {app_name}  ({file})")
-    return logs
-
-
-def replace_script_vars(
-    branch: str, site: str, admin_pw: str, db_pw: str,
-    title: str, description: str, publisher: str, email: str, license_: str,
+def gen_env_example(
+    app_name: str, title: str, description: str,
+    publisher: str, email: str, license_: str,
+    python_version: str, frappe_branch: str,
+    site: str, admin_pw: str, db_pw: str,
+    image_name: str,
 ) -> list[str]:
-    """Injecte toutes les variables dans devcontainer-post-create.sh."""
-    if not POST_CREATE.exists():
-        return ["  ⚠  devcontainer-post-create.sh introuvable"]
+    """Génère .env.example avec toutes les variables."""
+    env_path = Path(".env.example")
+    content = f"""\
+# =============================================================================
+#  .env.example — {app_name}
+#  Copier en .env et adapter avant de lancer docker compose.
+#  Ne jamais commiter .env (contient des secrets).
+# =============================================================================
 
-    text = POST_CREATE.read_text(encoding="utf-8")
+# ── App ───────────────────────────────────────────────────────────────────────
+APP_NAME={app_name}
+APP_TITLE={title}
+APP_DESCRIPTION={description}
+APP_PUBLISHER={publisher}
+APP_EMAIL={email}
+APP_LICENSE={license_}
 
-    replacements = {
-        # Environnement dev
-        'FRAPPE_BRANCH="version-15"'          : f'FRAPPE_BRANCH="{branch}"',
-        'SITE_NAME="development.localhost"'   : f'SITE_NAME="{site}"',
-        'DB_ROOT_PASSWORD="123"'              : f'DB_ROOT_PASSWORD="{db_pw}"',
-        'ADMIN_PASSWORD="admin"'              : f'ADMIN_PASSWORD="{admin_pw}"',
-        # Métadonnées bench new-app
-        'APP_TITLE="My App"'                  : f'APP_TITLE="{title}"',
-        'APP_DESCRIPTION="My Frappe application"': f'APP_DESCRIPTION="{description}"',
-        'APP_PUBLISHER="My Company"'          : f'APP_PUBLISHER="{publisher}"',
-        'APP_EMAIL="admin@example.com"'       : f'APP_EMAIL="{email}"',
-        'APP_LICENSE="mit"'                   : f'APP_LICENSE="{license_}"',
-    }
-    for needle, repl in replacements.items():
-        text = text.replace(needle, repl)
+# ── Frappe ────────────────────────────────────────────────────────────────────
+PYTHON_VERSION={python_version}
+FRAPPE_BRANCH={frappe_branch}
 
-    POST_CREATE.write_text(text, encoding="utf-8")
+# ── Dev (devcontainer / Codespaces) ───────────────────────────────────────────
+SITE_NAME={site}
+DB_ROOT_PASSWORD={db_pw}
+ADMIN_PASSWORD={admin_pw}
 
-    return [
-        f"  ✓  FRAPPE_BRANCH    → {branch}",
-        f"  ✓  SITE_NAME        → {site}",
-        "  ✓  DB_ROOT_PASSWORD → (défini)",
-        "  ✓  ADMIN_PASSWORD   → (défini)",
-        f"  ✓  APP_TITLE        → {title}",
-        f"  ✓  APP_DESCRIPTION  → {description or '(vide)'}",
-        f"  ✓  APP_PUBLISHER    → {publisher}",
-        f"  ✓  APP_EMAIL        → {email}",
-        f"  ✓  APP_LICENSE      → {license_}",
+# ── Production (docker compose) ───────────────────────────────────────────────
+# IMAGE_NAME={image_name}
+# APP_VERSION=latest
+# SITE_NAME=mon_app.example.com
+# DB_ROOT_PASSWORD=changeme_strong_password
+# ADMIN_PASSWORD=changeme_strong_password
+# ENABLE_DB=1
+# ENVIRONMENT=prod
+# APPS={app_name}
+
+# ── GitHub (apps privées dans apps.json) ──────────────────────────────────────
+# GH_PAT=ghp_xxxxxxxxxxxx   ← passer en variable d'env, jamais dans .env commité
+"""
+    env_path.write_text(content, encoding="utf-8")
+    return [f"  ✓  {env_path}"]
+
+
+def gen_apps_json(app_name: str, github_owner: str) -> list[str]:
+    """Génère apps.json si absent."""
+    apps_path = Path("apps.json")
+    if apps_path.exists():
+        return [f"  —  apps.json déjà présent, ignoré"]
+    data = [
+        {
+            "url": f"https://${{GH_PAT}}:x-oauth-basic@github.com/{github_owner}/{app_name}.git",
+            "branch": "main",
+        }
     ]
+    apps_path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    return [f"  ✓  apps.json  (remplacer {github_owner} si nécessaire)"]
+
+
+def gen_devcontainer_json(app_name: str) -> list[str]:
+    """Génère .devcontainer/devcontainer.json — pointe vers le submodule."""
+    dst = Path(".devcontainer/devcontainer.json")
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    content = f"""\
+{{
+  "name": "{app_name}",
+  "build": {{
+    "dockerfile": "../frappe_deploy/.devcontainer/Dockerfile",
+    "context": ".."
+  }},
+  "remoteUser": "frappe",
+  "workspaceFolder": "/workspaces/{app_name}",
+  "initializeCommand": "git submodule update --init --recursive",
+  "postCreateCommand": "bash frappe_deploy/scripts/devcontainer-setup.sh",
+  "forwardPorts": [8000, 9000],
+  "remoteEnv": {{
+    "PATH": "/home/frappe/frappe-bench/env/bin:/home/frappe/.local/bin:${{containerEnv:PATH}}"
+  }},
+  "customizations": {{
+    "vscode": {{
+      "extensions": [
+        "ms-python.python",
+        "ms-python.debugpy",
+        "mtxr.sqltools",
+        "mtxr.sqltools-driver-mysql"
+      ],
+      "settings": {{
+        "python.defaultInterpreterPath": "/home/frappe/frappe-bench/env/bin/python"
+      }}
+    }}
+  }},
+  "mounts": [
+    "source=${{localEnv:HOME}}${{localEnv:USERPROFILE}}/.ssh,target=/home/frappe/.ssh,type=bind,consistency=cached"
+  ]
+}}
+"""
+    dst.write_text(content, encoding="utf-8")
+    return [f"  ✓  {dst}"]
+
+
+def gen_publish_workflow(app_name: str, github_owner: str, frappe_branch: str) -> list[str]:
+    """Génère .github/workflows/publish.yml — appelle le workflow réutilisable."""
+    dst = Path(".github/workflows/publish.yml")
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    content = f"""\
+name: Build & publish
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version tag (ex: v1.0.0)"
+        required: true
+
+jobs:
+  build:
+    uses: {github_owner}/frappe_dokploy/.github/workflows/build-image.yml@main
+    with:
+      image-name: ghcr.io/{github_owner}/{app_name}
+      frappe-version: {frappe_branch}
+    secrets: inherit
+"""
+    dst.write_text(content, encoding="utf-8")
+    return [f"  ✓  {dst}"]
 
 
 # ── TUI ───────────────────────────────────────────────────────────────────────
 
 class FDApp(App):
     CSS = """
-    Screen {
-        background: #0d1117;
-        align: center top;
-    }
+    Screen { background: #0d1117; align: center top; }
+    #main  { width: 80; margin-top: 1; }
 
-    #main {
-        width: 80;
-        margin-top: 1;
-    }
-
-    /* ── Titres de section ── */
     .section-label {
-        color: #58a6ff;
-        text-style: bold;
-        height: 1;
-        margin: 1 0 0 1;
+        color: #58a6ff; text-style: bold;
+        height: 1; margin: 1 0 0 1;
     }
-
-    /* ── Grille formulaire 2 colonnes ── */
     .form-grid {
-        grid-size: 2;
-        grid-columns: 20 1fr;
-        border: solid #30363d;
-        padding: 0 2 1 2;
-        margin-bottom: 0;
-        height: auto;
+        grid-size: 2; grid-columns: 22 1fr;
+        border: solid #30363d; padding: 0 2 1 2;
+        height: auto; margin-bottom: 0;
     }
-
     .form-grid Label {
-        color: #8b949e;
-        content-align: left middle;
-        height: 3;
-        padding: 0 1;
+        color: #8b949e; content-align: left middle;
+        height: 3; padding: 0 1;
     }
-
     .form-grid Input {
-        height: 3;
-        background: #161b22;
-        border: tall #30363d;
-        color: #e6edf3;
+        height: 3; background: #161b22;
+        border: tall #30363d; color: #e6edf3;
     }
+    .form-grid Input:focus { border: tall #58a6ff; }
 
-    .form-grid Input:focus {
-        border: tall #58a6ff;
-    }
+    #btn-row  { height: 3; margin-top: 1; margin-bottom: 1; }
+    #btn-init { width: 1fr; }
+    #btn-next { width: 1fr; }
+    #btn-quit { width: 12; }
 
-    /* ── Boutons ── */
-    #btn-row {
-        height: 3;
-        margin-top: 1;
-        margin-bottom: 1;
-    }
-
-    #btn-init  { width: 1fr; }
-    #btn-bench { width: 1fr; }
-    #btn-quit  { width: 12; }
-
-    /* ── Résultat ── */
     #output {
-        height: 12;
-        border: solid #30363d;
-        background: #0d1117;
+        height: 14; border: solid #30363d; background: #0d1117;
     }
-
-    #hint {
-        color: #484f58;
-        text-align: center;
-        margin-top: 1;
-    }
+    #hint { color: #484f58; text-align: center; margin-top: 1; }
     """
 
     BINDINGS = [("escape", "quit", "Quitter")]
 
-    def __init__(self, app_name: str | None = None) -> None:
+    def __init__(self) -> None:
         super().__init__()
-        self._default_name = app_name or default_app_name()
+        self._default_name = Path.cwd().name
         self._logs: list[str] = []
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=False)
         with VerticalScroll(id="main"):
 
-            # ── Section APP ───────────────────────────────────────────
+            # ── APP ───────────────────────────────────────────────────
             yield Label("APP", classes="section-label")
             with Grid(classes="form-grid"):
                 yield Label("Nom de l'app")
-                yield Input(self._default_name, id="app-input")
+                yield Input(self._default_name, id="app-name")
+                yield Label("GitHub owner")
+                yield Input("Jeffreyapi", id="github-owner")
+                yield Label("Python version")
+                yield Input("python3.14", id="python-version")
                 yield Label("Frappe branch")
-                yield Input("version-15", id="branch-input")
+                yield Input("version-16", id="frappe-branch")
 
-            # ── Section INFOS (bench new-app) ─────────────────────────
-            yield Label("INFOS  (bench new-app)", classes="section-label")
+            # ── MÉTADONNÉES ───────────────────────────────────────────
+            yield Label("MÉTADONNÉES", classes="section-label")
             with Grid(classes="form-grid"):
-                yield Label("App title")
-                yield Input(self._default_name, id="title-input")
+                yield Label("Title")
+                yield Input(self._default_name, id="app-title")
                 yield Label("Description")
-                yield Input(self._default_name, id="desc-input")
+                yield Input(self._default_name, id="app-desc")
                 yield Label("Publisher")
-                yield Input("EasyTalents", id="publisher-input")
+                yield Input("EasyTalents", id="app-publisher")
                 yield Label("Email")
-                yield Input("admin@easytalents.fr", id="email-input")
+                yield Input("admin@easytalents.fr", id="app-email")
                 yield Label("Licence")
-                yield Input("apache-2.0", id="license-input")
+                yield Input("apache-2.0", id="app-license")
 
-            # ── Section DEVCONTAINER ──────────────────────────────────
-            yield Label("DEVCONTAINER", classes="section-label")
+            # ── DEVCONTAINER ─────────────────────────────────────────
+            yield Label("DEV", classes="section-label")
             with Grid(classes="form-grid"):
                 yield Label("Site name")
-                yield Input("development.localhost", id="site-input")
+                yield Input("development.localhost", id="site-name")
                 yield Label("Admin password")
-                yield Input("admin", password=True, id="admin-input")
+                yield Input("admin", password=True, id="admin-pw")
                 yield Label("DB root password")
-                yield Input("123", password=True, id="db-input")
+                yield Input("123", password=True, id="db-pw")
 
             # ── Actions ───────────────────────────────────────────────
             with Horizontal(id="btn-row"):
-                yield Button("▶  Lancer l'Init", id="btn-init", variant="success")
-                yield Button("Commandes bench",  id="btn-bench", variant="primary")
-                yield Button("Quitter",          id="btn-quit",  variant="error")
+                yield Button("▶  Initialiser", id="btn-init", variant="success")
+                yield Button("Étapes suivantes", id="btn-next", variant="primary")
+                yield Button("Quitter", id="btn-quit", variant="error")
 
-            # ── Résultat ──────────────────────────────────────────────
             yield TextArea("En attente…", id="output", read_only=True, theme="monokai")
             yield Label("Tab = champ suivant  •  Échap = quitter", id="hint")
 
@@ -255,14 +264,14 @@ class FDApp(App):
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "btn-init":
             self._do_init()
-        elif event.button.id == "btn-bench":
-            self._show_bench()
+        elif event.button.id == "btn-next":
+            self._show_next_steps()
         elif event.button.id == "btn-quit":
             self.exit()
 
     # ── Helpers ───────────────────────────────────────────────────────
 
-    def _val(self, widget_id: str, fallback: str = "") -> str:
+    def _v(self, widget_id: str, fallback: str = "") -> str:
         return self.query_one(f"#{widget_id}", Input).value.strip() or fallback
 
     def _push(self, lines: list[str]) -> None:
@@ -272,42 +281,59 @@ class FDApp(App):
         ta.scroll_end()
 
     def _do_init(self) -> None:
-        name      = self._val("app-input",      self._default_name)
-        branch    = self._val("branch-input",    "version-15")
-        title     = self._val("title-input",     self._default_name)
-        desc      = self._val("desc-input",      self._default_name)
-        publisher = self._val("publisher-input",  "EasyTalents")
-        email     = self._val("email-input",      "admin@easytalents.fr")
-        license_  = self._val("license-input",    "apache-2.0")
-        site      = self._val("site-input",       "development.localhost")
-        admin     = self.query_one("#admin-input", Input).value or "admin"
-        db        = self.query_one("#db-input",    Input).value or "123"
+        app_name      = self._v("app-name",       self._default_name)
+        owner         = self._v("github-owner",    "Jeffreyapi")
+        python_ver    = self._v("python-version",  "python3.14")
+        frappe_branch = self._v("frappe-branch",   "version-16")
+        title         = self._v("app-title",       app_name)
+        desc          = self._v("app-desc",        app_name)
+        publisher     = self._v("app-publisher",   "EasyTalents")
+        email         = self._v("app-email",       "admin@easytalents.fr")
+        license_      = self._v("app-license",     "apache-2.0")
+        site          = self._v("site-name",       "development.localhost")
+        admin_pw      = self.query_one("#admin-pw", Input).value or "admin"
+        db_pw         = self.query_one("#db-pw",    Input).value or "123"
+        image_name    = f"ghcr.io/{owner}/{app_name}"
 
         self._logs.clear()
-        self._push([f"── Init : {name} ──", ""])
+        self._push([f"── Init : {app_name} ──", ""])
         try:
-            self._push(["Copie des templates…"])
-            self._push(copy_templates())
-            self._push(["", "Remplacement MY_APP…"])
-            self._push(replace_app_name(name))
-            self._push(["", "Injection des variables…"])
-            self._push(replace_script_vars(branch, site, admin, db, title, desc, publisher, email, license_))
-            self._push(["", f"✅  Init terminé — lance le Codespace pour démarrer automatiquement."])
+            self._push(["[1/4] .env.example…"])
+            self._push(gen_env_example(
+                app_name, title, desc, publisher, email, license_,
+                python_ver, frappe_branch, site, admin_pw, db_pw, image_name,
+            ))
+            self._push(["", "[2/4] apps.json…"])
+            self._push(gen_apps_json(app_name, owner))
+            self._push(["", "[3/4] .devcontainer/devcontainer.json…"])
+            self._push(gen_devcontainer_json(app_name))
+            self._push(["", "[4/4] .github/workflows/publish.yml…"])
+            self._push(gen_publish_workflow(app_name, owner, frappe_branch))
+            self._push(["", "✅  Fait ! Clique sur 'Étapes suivantes' pour la suite."])
         except Exception as exc:
             self._push([f"", f"❌  Erreur : {exc}"])
 
-    def _show_bench(self) -> None:
+    def _show_next_steps(self) -> None:
+        app_name = self._v("app-name", self._default_name)
         self._logs.clear()
         self._push([
-            "── Commandes manuelles (si besoin) ──",
+            "── Étapes suivantes ──", "",
+            "  1. Vérifier apps.json  (remplacer le owner GitHub si besoin)",
+            "  2. Copier .env.example → .env  et ajuster les valeurs",
+            "  3. Committer et pousser :",
+            f"       git add -A && git commit -m 'init: {app_name}' && git push",
             "",
-            "  # Relancer le script de setup :",
-            f"  bash .devcontainer/devcontainer-post-create.sh",
+            "  4. Ouvrir un Codespace",
+            "     → git submodule update --init  (si pas fait automatiquement)",
+            "     → le postCreateCommand lance frappe_deploy/scripts/devcontainer-setup.sh",
             "",
-            "  # Lancer le serveur de dev :",
-            f"  cd ~/frappe-bench && bench start",
+            "  5. Une fois le Codespace prêt, si 1ère création de l'app :",
+            f"       git add {app_name}/ pyproject.toml",
+            f"       git commit -m 'init: scaffold {app_name}'",
+            "       git push",
             "",
-            f"  # URL : http://development.localhost:8000",
+            "  Lancer le serveur :",
+            "    cd ~/frappe-bench && bench start",
         ])
 
 

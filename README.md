@@ -1,399 +1,201 @@
 # frappe_dokploy
 
-Infrastructure générique de **build** et **déploiement** pour applications Frappe/ERPNext.
+Infrastructure générique de **build** et **déploiement** pour applications Frappe v16.
 
-Conçu pour être utilisé comme **git submodule** dans chaque repo d'application Frappe.
-Peut aussi fonctionner en mode standalone pour tester l'infrastructure seule.
+Conçu pour être utilisé comme **git submodule** (`frappe_deploy/`) dans chaque repo d'application.
+Le TUI `fd.py` initialise un nouveau repo en générant les 4 fichiers projet-spécifiques — tout le
+reste (Dockerfile, docker-compose, scripts) vit dans ce submodule et n'est jamais copié.
 
 ---
 
-## Démarrage rapide (nouveau repo)
+## Démarrage rapide
 
 ```bash
+# 1. Créer le repo app (ou cloner un repo GitHub vide)
+mkdir mon_app && cd mon_app
 git init
+
+# 2. Ajouter le submodule
 git submodule add https://github.com/Jeffreyapi/frappe_dokploy.git frappe_deploy
 
-# dépendance TUI via uv (package manager unique)
-# Option 1 (recommandé) : venv local
-uv venv .venv
-source .venv/bin/activate    # Windows : .venv\\Scripts\\activate
+# 3. Installer Textual (dépendance du TUI)
+uv venv .venv && source .venv/bin/activate   # Windows : .venv\Scripts\activate
 uv pip install textual
 
-# Option 2 (global) : sans venv
-# uv pip install --system textual
-
-# lance le TUI depuis la racine du projet (où se trouve le dossier frappe_deploy)
+# 4. Lancer le TUI depuis la racine du repo app
 python frappe_deploy/scripts/fd.py
-# (alternatif) cd frappe_deploy && python -m scripts.fd
+```
+
+Le TUI génère les 4 fichiers, puis :
+
+```bash
+# 5. Copier .env.example → .env et ajuster les valeurs
+cp .env.example .env
+
+# 6. Committer et pousser
+git add -A && git commit -m "init: mon_app" && git push
+
+# 7. Ouvrir dans VS Code / GitHub Codespaces
+# F1 → "Dev Containers: Reopen in Container"
 ```
 
 ---
 
-## Structure du repo
+## Architecture
+
+### Ce que fournit le submodule (jamais copié)
 
 ```
-frappe_dokploy/
-├── Dockerfile                   # build Frappe + apps + s5cmd (context = ce répertoire)
-├── docker-compose.yml           # stack complète (incluse via include: dans le repo app)
-├── docker-compose.build.yml     # override build local à la volée
-├── apps.json                    # exemple pour mode standalone uniquement
-├── .env.example                 # exemple pour mode standalone uniquement
-├── resources/
-│   ├── nginx-entrypoint.sh      # entrypoint nginx avec substitution de variables
-│   └── nginx-template.conf      # config nginx (headers sécurité, gzip, websocket)
+frappe_deploy/                        ← frappe_dokploy cloné en submodule
+├── Dockerfile                        # image production (base ghcr.io/frappe/base)
+├── docker-compose.yml                # stack complète avec labels Traefik (${APP_NAME}, ${SITE_NAME})
+├── docker-compose.build.yml          # override build local
+├── .devcontainer/
+│   └── Dockerfile                    # image dev (Ubuntu 24.04, Python 3.14, MariaDB, Redis)
+├── .github/workflows/
+│   └── build-image.yml               # workflow réutilisable (workflow_call)
+├── scripts/
+│   ├── fd.py                         # TUI d'initialisation
+│   └── devcontainer-setup.sh         # setup dev (appelé par postCreateCommand)
 ├── deploy/
 │   ├── scripts/
-│   │   ├── init.sh              # orchestrateur : configure → create|restore|update
-│   │   └── site.sh              # cycle de vie complet du site Frappe
+│   │   ├── init.sh                   # orchestrateur site-manager
+│   │   └── site.sh                   # cycle de vie du site Frappe
 │   └── config/
-│       └── skip_fixtures.list   # patterns de fixtures à neutraliser (vide = aucune)
-└── templates/                   # fichiers à copier dans chaque repo app
-    ├── docker-compose.app.yml   # wrapper include: + labels Traefik
-    ├── .env.app.example         # variables spécifiques au projet
-    ├── publish.app.yml          # workflow CI/CD GitHub Actions
-    └── Makefile                 # commandes de développement
+│       └── skip_fixtures.list        # fixtures à neutraliser
+└── resources/
+    ├── nginx-entrypoint.sh
+    └── nginx-template.conf
 ```
 
----
-
-## Créer une nouvelle app Frappe (flux recommandé)
-
-Ce flux part d'un repo vide, ajoute le submodule `frappe_dokploy`, ouvre le
-devcontainer pour disposer d'un bench prêt, puis génère l'app avec `bench`.
-
-> **Prérequis** : VS Code + extension Dev Containers (ou Codespaces), Docker
-démarré, et permissions GitHub pour créer le repo applicatif.
-
----
-
-### 1 — Préparer le repo et copier le submodule
-
-```bash
-mkdir mon_app && cd mon_app
-# initialiser votre repo git (ou créez-le d'abord sur GitHub puis clonez-le)
-git init
-
-# ajouter l'infra en submodule
-git submodule add https://github.com/Jeffreyapi/frappe_dokploy.git frappe_deploy
-
-# copier les fichiers de base depuis le submodule
-cp frappe_deploy/templates/docker-compose.app.yml  docker-compose.yml
-cp frappe_deploy/templates/.env.app.example        .env.example
-cp frappe_deploy/templates/Makefile                Makefile
-mkdir -p .github/workflows
-cp frappe_deploy/templates/publish.app.yml         .github/workflows/publish.yml
-
-# devcontainer (pour avoir le bench prêt dans VS Code)
-mkdir -p .devcontainer
-cp frappe_deploy/templates/.devcontainer/Dockerfile                   .devcontainer/Dockerfile
-cp frappe_deploy/templates/.devcontainer/devcontainer.json            .devcontainer/devcontainer.json
-cp frappe_deploy/templates/.devcontainer/devcontainer-post-create.sh  .devcontainer/devcontainer-post-create.sh
-chmod +x .devcontainer/devcontainer-post-create.sh
-
-# remplacer MY_APP automatiquement (prend le nom du dossier courant)
-chmod +x frappe_deploy/scripts/rename_app.sh
-frappe_deploy/scripts/rename_app.sh
-# Optionnel : APP_NAME=mon_app frappe_deploy/scripts/rename_app.sh
-```
-
----
-
-### 2 — Ouvrir le devcontainer pour obtenir le bench
-
-Dans VS Code : `F1 → Dev Containers: Reopen in Container` (ou Codespaces).
-Le script post-create fait : MariaDB + Redis, `bench init frappe-bench` et
-création du site `development.localhost` prêt à recevoir l'app.
-
-> Tip : un TUI léger est dispo (`python -m scripts.fd`) pour lancer l'init
-> (copie + remplacements) et afficher les commandes bench.
-
----
-
-### 3 — Générer l'app avec bench (à l'intérieur du devcontainer)
-
-```bash
-# dans le terminal VS Code
-cd ~/frappe-bench
-bench new-app mon_app
-
-# ramener le code dans le repo (workspace) et symlink vers le bench
-cp -a apps/mon_app/. /workspaces/mon_app/
-rm -rf apps/mon_app
-ln -s /workspaces/mon_app apps/mon_app
-
-# installer l'app sur le site de dev
-bench --site development.localhost install-app mon_app
-bench start  # serveur de dev : http://development.localhost:8000
-```
-
-> Le `Makefile` reste valable pour les commandes Docker de déploiement.
-
----
-
-### 4 — Versionner et pousser sur GitHub
-
-```bash
-cd /workspaces/mon_app
-git add .
-git commit -m "chore: scaffold initial"
-git remote add origin https://github.com/Jeffreyapi/mon_app.git
-git push -u origin main
-```
-
----
-
-### Récapitulatif du flux
-
-```
-submodule + templates        → infra prête
-Reopen in Container          → bench initialisé
-bench new-app + symlink      → app générée dans le repo
-install-app + bench start    → test local immédiat
-git push                     → repo prêt pour CI/CD
-```
-
----
-
-## Mode Submodule (usage principal)
-
-### Structure du repo app après configuration
+### Ce que génère le TUI (4 fichiers projet-spécifiques)
 
 ```
 mon_app/
-├── mon_app/                 ← code Python Frappe (le module de l'app)
-│   ├── hooks.py
-│   └── ...
-├── setup.py
-├── apps.json                ← apps à embarquer dans l'image (spécifique au projet)
-├── .env.example             ← valeurs de config sans secrets (commité)
-├── .env                     ← secrets locaux (gitignore)
-├── docker-compose.yml       ← inclut frappe_deploy + labels Traefik du projet
-├── Makefile                 ← raccourcis de commandes
-└── frappe_deploy/           ← ce repo, en git submodule
-    ├── Dockerfile
-    ├── docker-compose.yml
-    └── ...
+├── .env.example                      # variables dev + prod (commité, sans secrets)
+├── apps.json                         # apps à embarquer dans l'image Docker
+├── .devcontainer/
+│   └── devcontainer.json             # pointe vers frappe_deploy pour le Dockerfile et le setup
+└── .github/workflows/
+    └── publish.yml                   # appelle le workflow réutilisable build-image.yml
+```
+
+### Structure complète après le premier Codespace
+
+```
+mon_app/
+├── mon_app/                          ← module Python Frappe (scaffoldé par bench new-app)
+├── pyproject.toml
+├── apps.json
+├── .env.example
+├── .env                              ← secrets locaux (gitignored)
+├── .devcontainer/
+│   └── devcontainer.json
+├── .github/workflows/
+│   └── publish.yml
+└── frappe_deploy/                    ← submodule (frappe_dokploy)
 ```
 
 ---
 
-### Étape 1 — Ajouter le submodule
+## Le TUI fd.py
+
+Lance depuis la racine du repo app :
 
 ```bash
-cd mon_app
-git submodule add https://github.com/Jeffreyapi/frappe_dokploy.git frappe_deploy
-git commit -m "chore: add frappe_deploy submodule"
+python frappe_deploy/scripts/fd.py
 ```
 
-Cloner un repo qui possède déjà le submodule :
+### Champs et valeurs par défaut
 
-```bash
-# Avec submodules d'emblée (recommandé)
-git clone --recurse-submodules https://github.com/Jeffreyapi/mon_app.git
+| Section | Champ | Défaut |
+|---------|-------|--------|
+| **APP** | Nom de l'app | nom du dossier courant |
+| | GitHub owner | `Jeffreyapi` |
+| | Python version | `python3.14` |
+| | Frappe branch | `version-16` |
+| **MÉTADONNÉES** | Title | nom du dossier |
+| | Description | nom du dossier |
+| | Publisher | `EasyTalents` |
+| | Email | `admin@easytalents.fr` |
+| | Licence | `apache-2.0` |
+| **DEV** | Site name | `development.localhost` |
+| | Admin password | `admin` |
+| | DB root password | `123` |
 
-# Après un clone normal
-git submodule update --init
-```
+- **▶ Initialiser** : génère les 4 fichiers dans le répertoire courant
+- **Étapes suivantes** : affiche le récapitulatif des actions post-init
+- **Échap** : quitter
 
 ---
 
-### Étape 2 — Copier les templates
+## Environnement de développement (Codespace / Dev Container)
 
-Toutes les commandes suivantes s'exécutent depuis la **racine du repo app**.
+### Comment ça fonctionne
 
-```bash
-# ── Déploiement (obligatoire) ─────────────────────────────────────────────────
-cp frappe_deploy/templates/docker-compose.app.yml  docker-compose.yml
-cp frappe_deploy/templates/.env.app.example        .env.example
-cp frappe_deploy/templates/Makefile                Makefile
-mkdir -p .github/workflows
-cp frappe_deploy/templates/publish.app.yml         .github/workflows/publish.yml
+Le `devcontainer.json` généré par le TUI définit deux hooks :
 
-# ── Devcontainer (optionnel, pour développer l'app dans VS Code) ──────────────
-mkdir -p .devcontainer
-cp frappe_deploy/templates/.devcontainer/Dockerfile                   .devcontainer/Dockerfile
-cp frappe_deploy/templates/.devcontainer/devcontainer.json            .devcontainer/devcontainer.json
-cp frappe_deploy/templates/.devcontainer/devcontainer-post-create.sh  .devcontainer/devcontainer-post-create.sh
-chmod +x .devcontainer/devcontainer-post-create.sh
-```
-
-Remplacer `MY_APP` par le nom réel de l'application dans tous les fichiers copiés :
-
-```bash
-# Remplacer MY_APP dans tous les fichiers copiés (Linux / WSL)
-APP=pharmtek_crm   # ← adapter ici
-
-sed -i "s/MY_APP/${APP}/g" \
-  docker-compose.yml \
-  .env.example \
-  .github/workflows/publish.yml \
-  .devcontainer/devcontainer.json \
-  .devcontainer/devcontainer-post-create.sh
-```
-
-> Le `Makefile` ne contient pas de `MY_APP` — pas besoin de le modifier.
-
----
-
-### Étape 3 — Créer `apps.json`
-
-Ce fichier liste les apps Frappe à embarquer dans l'image Docker.
-Il se place à la **racine du repo app** (pas dans `frappe_deploy/`).
-
-**App sans ERPNext** (ex : pharmtek_crm) :
 ```json
-[
-  {
-    "url": "https://${GH_PAT}:x-oauth-basic@github.com/Jeffreyapi/mon_app.git",
-    "branch": "main"
-  }
-]
+"initializeCommand": "git submodule update --init --recursive",
+"postCreateCommand": "bash frappe_deploy/scripts/devcontainer-setup.sh"
 ```
 
-**App qui nécessite ERPNext** (ex : talents30, jurisconnect) — ERPNext **en premier** :
-```json
-[
-  { "url": "https://github.com/frappe/erpnext.git", "branch": "version-15" },
-  {
-    "url": "https://${GH_PAT}:x-oauth-basic@github.com/Jeffreyapi/mon_app.git",
-    "branch": "main"
-  }
-]
+- **`initializeCommand`** — s'exécute avant la construction du conteneur, avec les credentials git du Codespace → initialise le submodule `frappe_deploy`
+- **`postCreateCommand`** — s'exécute dans le conteneur après sa création → lance `devcontainer-setup.sh`
+
+### Ce que fait `devcontainer-setup.sh` (idempotent)
+
+```
+1.  MariaDB 10.6 + Redis (services système dans le conteneur)
+2.  Installation de uv + frappe-bench CLI
+3.  bench init ~/frappe-bench --python python3.14 --frappe-branch version-16
+4.  Config Redis + MariaDB dans common_site_config.json
+5.  Apps publiques depuis apps.json (skip si ${GH_PAT} détecté dans l'URL)
+6.  bench new-app (non-interactif via printf) — si pyproject.toml absent
+7.  Copie de l'app vers /workspaces/APP (cp -rn, sans écraser l'existant)
+8.  Symlink ~/frappe-bench/apps/APP → /workspaces/APP
+9.  pip install -e (mode éditable — hot-reload Python)
+10. bench new-site development.localhost
+11. bench install-app
 ```
 
-> `${GH_PAT}` est un placeholder substitué par `envsubst` avant le build.
-> Ne jamais écrire le token directement dans ce fichier.
-
----
-
-### Étape 4 — Configurer l'environnement
-
-```bash
-cp .env.example .env
-# Renseigner au minimum : SITE_NAME, ADMIN_PASSWORD, DB_ROOT_PASSWORD, IMAGE_NAME
-
-# Créer le réseau Traefik/Dokploy (une seule fois par machine)
-docker network create dokploy-network
-```
-
----
-
-### Étape 5 — Démarrer la stack
-
-**Mode standard** — image pré-construite depuis GHCR :
-```bash
-make up
-# équivalent : docker compose up -d
-```
-
-**Mode build local** — reconstruit l'image depuis `apps.json` :
-```bash
-export GH_PAT=ghp_xxxxxxxxxxxx
-make build
-```
-
-Suivre le démarrage automatique du site-manager :
-```bash
-make logs
-# équivalent : docker compose logs -f site-manager
-```
-
----
-
-### Étape 6 — CI/CD
-
-Le workflow `publish.yml` (copié depuis `templates/publish.app.yml`) se déclenche
-automatiquement à chaque push sur `main`/`develop` ou tag `v*`.
-
-**Secret GitHub requis** dans le repo app :
-
-| Secret | Description |
-|--------|-------------|
-| `GH_PAT` | Token GitHub avec scopes `repo` + `write:packages` |
-
-Image produite : `ghcr.io/jeffreyapi/MON_APP:main-abc1234` + `latest`.
-
----
-
-## Devcontainer — environnement de développement
-
-Le devcontainer permet de **coder** l'application Frappe dans VS Code ou GitHub
-Codespaces avec un bench en mode développeur, du hot-reload et du debug Python.
-
-> Ce n'est pas la stack Docker Compose de déploiement — c'est un environnement
-> de développement séparé, tout-en-un (MariaDB + Redis + bench dans un seul conteneur).
-
-### Versions alignées avec la prod
-
-| Composant | Devcontainer | Stack de déploiement |
-|-----------|:-----------:|:-------------------:|
-| MariaDB | 10.6 | 10.6 ✓ |
-| Node.js | 18 | 18 ✓ |
-| Frappe | version-15 | version-15 ✓ |
+Le script lit `.env` (ou `.env.example` si `.env` absent) depuis la racine du projet.
 
 ### Ouvrir le devcontainer
 
-**VS Code** (local) :
+**VS Code local :**
 ```
 F1 → "Dev Containers: Reopen in Container"
 ```
 
-**GitHub Codespaces** :
+**GitHub Codespaces :**
 ```
 Code → Codespaces → Create codespace on main
-```
-
-### Ce que le post-create fait automatiquement
-
-```
-1. Démarre MariaDB 10.6 + Redis (services système dans le conteneur)
-2. Installe uv + frappe-bench
-3. bench init frappe-bench --frappe-branch version-15
-4. Installe les apps publiques de apps.json (ex: ERPNext)
-5. Installe l'app du repo en MODE ÉDITABLE :
-     ln -s /workspaces/mon_app  frappe-bench/apps/mon_app
-     pip install -e apps/mon_app
-   → les modifications Python dans VS Code sont immédiatement actives
-6. bench new-site development.localhost
-7. bench install-app mon_app (+ ERPNext si présent)
-8. Active le mode développeur
 ```
 
 ### Utilisation après ouverture
 
 ```bash
-# Démarrer le serveur de développement (depuis le terminal VS Code)
+# Démarrer le serveur de développement
 cd ~/frappe-bench && bench start
 
 # Accéder au site
 # http://development.localhost:8000
-# Login : Administrator / admin
+# Login : Administrator / <ADMIN_PASSWORD>
 ```
 
-### Debug Python avec VS Code
+### Première création — committer l'app scaffoldée
 
-Ajouter `.vscode/launch.json` à la racine du repo app :
+Après le premier Codespace, `devcontainer-setup.sh` a scaffoldé l'app dans `/workspaces/mon_app/`.
+Il faut la committer :
 
-```json
-{
-  "version": "0.2.0",
-  "configurations": [
-    {
-      "name": "Bench Web",
-      "type": "debugpy",
-      "request": "launch",
-      "program": "${env:HOME}/frappe-bench/apps/frappe/frappe/utils/bench_helper.py",
-      "args": ["frappe", "serve", "--port", "8000", "--noreload", "--nothreading"],
-      "cwd": "${env:HOME}/frappe-bench/sites",
-      "env": { "DEV_SERVER": "1" }
-    }
-  ]
-}
+```bash
+git add mon_app/ pyproject.toml
+git commit -m "init: scaffold mon_app"
+git push
 ```
 
-Puis : `F5` → "Bench Web" pour démarrer le serveur avec breakpoints.
-
-### Différence devcontainer vs stack de déploiement
+### Tableau comparatif
 
 | | Devcontainer | `docker compose up` |
 |--|:--:|:--:|
@@ -406,37 +208,117 @@ Puis : `F5` → "Bench Web" pour démarrer le serveur avec breakpoints.
 
 ---
 
-## Mode Standalone
+## CI/CD — Build d'image Docker
 
-Pour tester l'infrastructure sans code d'application custom.
+### Workflow réutilisable (`build-image.yml`)
 
-```bash
-git clone https://github.com/Jeffreyapi/frappe_dokploy.git
-cd frappe_dokploy
+`frappe_deploy/.github/workflows/build-image.yml` est un `workflow_call` utilisable par tout
+repo sous l'organisation `Jeffreyapi`.
 
-cp .env.example .env
-# Éditer .env : SITE_NAME, ADMIN_PASSWORD, DB_ROOT_PASSWORD
+Le TUI génère automatiquement `.github/workflows/publish.yml` dans le repo app :
 
-docker network create dokploy-network
-docker compose up -d
-docker compose logs -f site-manager
+```yaml
+jobs:
+  build:
+    uses: Jeffreyapi/frappe_dokploy/.github/workflows/build-image.yml@main
+    with:
+      image-name: ghcr.io/Jeffreyapi/mon_app
+      frappe-version: version-16
+    secrets: inherit
 ```
 
-Build local en mode standalone :
+### Déclencheurs
+
+- Push sur `main` → tag `main-<sha7>` + `latest`
+- Push de tag `v*` → tag correspondant + `latest`
+- `workflow_dispatch` → tag saisi manuellement
+
+### Secret requis
+
+| Secret | Scopes nécessaires |
+|--------|--------------------|
+| `GH_PAT` | `repo` + `write:packages` |
+
+À configurer dans **Settings → Secrets → Actions** du repo app.
+
+### Image produite
+
+```
+ghcr.io/Jeffreyapi/mon_app:main-abc1234
+ghcr.io/Jeffreyapi/mon_app:latest
+```
+
+---
+
+## Déploiement en production
+
+La stack de déploiement utilise directement `frappe_deploy/docker-compose.yml` via la commande
+`docker compose` depuis la racine du repo app.
+
+### `apps.json` — apps embarquées dans l'image
+
+Placé à la **racine du repo app** (généré par le TUI, à adapter) :
+
+**App privée seule :**
+```json
+[
+  {
+    "url": "https://${GH_PAT}:x-oauth-basic@github.com/Jeffreyapi/mon_app.git",
+    "branch": "main"
+  }
+]
+```
+
+**Avec ERPNext (ERPNext en premier) :**
+```json
+[
+  { "url": "https://github.com/frappe/erpnext.git", "branch": "version-16" },
+  {
+    "url": "https://${GH_PAT}:x-oauth-basic@github.com/Jeffreyapi/mon_app.git",
+    "branch": "main"
+  }
+]
+```
+
+> `${GH_PAT}` est substitué par `envsubst` lors du build CI — ne jamais écrire le token directement.
+
+### Configurer l'environnement
+
+```bash
+cp .env.example .env
+# Renseigner au minimum :
+#   SITE_NAME, ADMIN_PASSWORD, DB_ROOT_PASSWORD, IMAGE_NAME, APP_NAME, APPS
+```
+
+### Démarrer la stack
+
+```bash
+# Créer le réseau Traefik/Dokploy (une seule fois par machine)
+docker network create dokploy-network
+
+# Démarrer avec l'image pré-construite depuis GHCR
+docker compose -f frappe_deploy/docker-compose.yml up -d
+
+# Suivre le site-manager
+docker compose -f frappe_deploy/docker-compose.yml logs -f site-manager
+```
+
+### Build local (sans CI)
+
 ```bash
 export GH_PAT=ghp_xxxxxxxxxxxx
 envsubst < apps.json > /tmp/apps.build.json
 export APPS_JSON_BASE64=$(base64 -w 0 /tmp/apps.build.json)
 
-docker compose -f docker-compose.yml -f docker-compose.build.yml up --build -d
+docker compose \
+  -f frappe_deploy/docker-compose.yml \
+  -f frappe_deploy/docker-compose.build.yml \
+  up --build -d
 ```
 
 ---
 
 ## Référence des variables d'environnement
-
-Le `.env` est lu depuis la **racine du répertoire de travail** (là où `docker compose`
-est lancé), que ce soit en mode submodule ou standalone.
 
 ### Image Docker
 
@@ -446,22 +328,21 @@ est lancé), que ce soit en mode submodule ou standalone.
 | `APP_VERSION` | Tag de l'image | `latest` |
 | `PULL_POLICY` | `always` \| `never` \| `if_not_present` | `always` |
 
-### Site Frappe
+### App / Traefik
 
-| Variable | Req. | Description | Défaut |
-|----------|:----:|-------------|--------|
-| `SITE_NAME` | ✓ | Nom de domaine du site Frappe | — |
-| `ADMIN_PASSWORD` | ✓ | Mot de passe administrateur | — |
-| `FRAPPE_SITE_NAME_HEADER` | | Header de résolution du site | `$host` |
+| Variable | Req. | Description |
+|----------|:----:|-------------|
+| `APP_NAME` | ✓ | Nom de l'app (utilisé dans les labels Traefik) |
+| `SITE_NAME` | ✓ | Nom de domaine du site Frappe + règle Traefik |
 
-### Base de données
+### Frappe / Dev
 
-| Variable | Req. | Description | Défaut |
-|----------|:----:|-------------|--------|
-| `DB_ROOT_PASSWORD` | ✓ | Mot de passe root MariaDB | — |
-| `DB_HOST` | | Hôte MariaDB | `db` |
-| `DB_PORT` | | Port MariaDB | `3306` |
-| `ENABLE_DB` | | `1` = MariaDB embarquée, `0` = DB externe | `1` |
+| Variable | Description | Défaut |
+|----------|-------------|--------|
+| `PYTHON_VERSION` | Version Python pour bench init | `python3.14` |
+| `FRAPPE_BRANCH` | Branche Frappe | `version-16` |
+| `ADMIN_PASSWORD` | Mot de passe administrateur | — |
+| `DB_ROOT_PASSWORD` | Mot de passe root MariaDB | — |
 
 ### Comportement du site-manager
 
@@ -470,7 +351,7 @@ est lancé), que ce soit en mode submodule ou standalone.
 | `ENVIRONMENT` | `dev` ou `prod` | `dev` |
 | `RESTORE` | `1` = restaurer depuis S3 au démarrage | `0` |
 | `APPS` | Apps à installer sur le site (virgules) | vide |
-| `UPDATE_APPS` | Apps ciblées pour le build/update (vide = toutes) | vide |
+| `UPDATE_APPS` | Apps ciblées pour le build/update | vide |
 | `SITE_MANAGER_RUN` | `1` = actif, `0` = désactivé | `1` |
 | `NEUTRALIZE_MODE` | `rm` = supprimer \| `empty` = vider les fixtures | `rm` |
 | `SKIP_FIXTURES` | Patterns de fixtures à neutraliser (CSV) | vide |
@@ -494,9 +375,7 @@ est lancé), que ce soit en mode submodule ou standalone.
 
 ---
 
-## Cycle de vie du site
-
-Logique automatique au démarrage (`init.sh`) :
+## Cycle de vie du site (site-manager)
 
 ```
 démarrage
@@ -509,19 +388,9 @@ démarrage
 Actions manuelles :
 
 ```bash
-# Via Makefile
-make backup
-make update
-make configure
-
-# Ou via docker compose
-docker compose run --rm site-manager backup
-docker compose run --rm site-manager restore
-docker compose run --rm site-manager update
-docker compose run --rm site-manager configure
-
-# Mode debug (logs verbeux)
-docker compose run --rm -e FRAPPE_DEBUG=1 site-manager update
+docker compose -f frappe_deploy/docker-compose.yml run --rm site-manager backup
+docker compose -f frappe_deploy/docker-compose.yml run --rm site-manager update
+docker compose -f frappe_deploy/docker-compose.yml run --rm -e RESTORE=1 site-manager restore
 ```
 
 ---
@@ -546,8 +415,6 @@ NEUTRALIZE_MODE=rm    # rm = suppression | empty = remplacer par []
 ---
 
 ## Mettre à jour le submodule
-
-Quand des corrections ou nouvelles fonctionnalités sont disponibles :
 
 ```bash
 cd frappe_deploy && git pull origin main && cd ..

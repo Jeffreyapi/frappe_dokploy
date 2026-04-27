@@ -1,19 +1,27 @@
 # =============================================================================
-#  Devcontainer Dockerfile — environnement de DÉVELOPPEMENT Frappe
+#  Devcontainer Dockerfile — environnement de DÉVELOPPEMENT Frappe v16
 #
-#  Ce conteneur est fait pour CODER l'app (bench en mode développeur, hot-reload,
-#  debug Python). Il ne remplace pas la stack Docker Compose de frappe_deploy/
-#  qui, elle, sert au DÉPLOIEMENT (prod/staging).
-#
-#  Versions alignées avec la stack de production (frappe_deploy/) :
-#    - MariaDB  : 10.6  (Ubuntu 22.04 default → aucun repo externe nécessaire)
-#    - Node.js  : 18    (LTS recommandé pour Frappe version-15)
-#    - Python   : 3.10  (Ubuntu 22.04 default)
+#  Stack :
+#    - Ubuntu 24.04
+#    - Python 3.14  (via deadsnakes PPA — requis par Frappe v16)
+#    - Node.js 18 LTS
+#    - MariaDB 10.6
+#    - Redis 7
 # =============================================================================
 
-FROM ubuntu:22.04
+FROM ubuntu:24.04
 
 ENV DEBIAN_FRONTEND=noninteractive
+
+# ── Python 3.14 via deadsnakes PPA ───────────────────────────────────────────
+RUN apt-get update && apt-get install -y software-properties-common && \
+    add-apt-repository ppa:deadsnakes/ppa && \
+    apt-get update && apt-get install -y \
+    python3.14 \
+    python3.14-dev \
+    python3.14-venv \
+    python3.14-distutils \
+ && rm -rf /var/lib/apt/lists/*
 
 # ── Dépendances système ───────────────────────────────────────────────────────
 RUN apt-get update && apt-get install -y \
@@ -21,13 +29,10 @@ RUN apt-get update && apt-get install -y \
     curl \
     git \
     build-essential \
-    python3 \
-    python3-dev \
-    python3-venv \
-    python3-pip \
     libffi-dev \
     libssl-dev \
-    # MariaDB 10.6 — fourni nativement par Ubuntu 22.04 (pas de repo externe)
+    pkg-config \
+    # MariaDB 10.6
     mariadb-server \
     mariadb-client \
     libmariadb-dev-compat \
@@ -35,12 +40,14 @@ RUN apt-get update && apt-get install -y \
     # Redis
     redis-server \
     # Utilitaires
-    cron \
+    wkhtmltopdf \
     xvfb \
     libfontconfig \
-    pkg-config \
-    wkhtmltopdf \
+    cron \
  && rm -rf /var/lib/apt/lists/*
+
+# ── pip pour Python 3.14 ─────────────────────────────────────────────────────
+RUN curl -sS https://bootstrap.pypa.io/get-pip.py | python3.14
 
 # ── Node.js 18 LTS + Yarn ────────────────────────────────────────────────────
 RUN curl -fsSL https://deb.nodesource.com/setup_18.x | bash - && \
@@ -49,7 +56,7 @@ RUN curl -fsSL https://deb.nodesource.com/setup_18.x | bash - && \
     rm -rf /var/lib/apt/lists/*
 
 # ── honcho (Procfile runner pour bench start) ─────────────────────────────────
-RUN pip3 install honcho
+RUN python3.14 -m pip install honcho
 
 # ── User "frappe" — cohérent avec l'image ghcr.io/frappe/base ────────────────
 RUN useradd -m -s /bin/bash frappe && \

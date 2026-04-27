@@ -1,9 +1,9 @@
 # =============================================================================
 #  publish.yml — CI standalone de frappe_dokploy
 #
-#  Ce workflow sert à TESTER l'infrastructure seule (Dockerfile, scripts).
-#  Pour construire l'image d'un projet réel, utiliser le workflow du repo app
-#  (généré depuis templates/publish.app.yml).
+#  Ce workflow sert à publier l'image de base frappe_dokploy (ghcr.io/jeffreyapi/frappe).
+#  Pour construire l'image d'un projet réel, chaque repo app contient son propre
+#  publish.yml qui appelle le workflow réutilisable build-image.yml (workflow_call).
 #
 #  Déclenché :
 #    - manuellement (workflow_dispatch) avec choix du tag et de la version Frappe
@@ -23,9 +23,9 @@ on:
         description: "Tag Docker (ex: v1.0.0)"
         required: true
       frappe_version:
-        description: "Branche Frappe (ex: version-15)"
+        description: "Branche Frappe (ex: version-16)"
         required: false
-        default: "version-15"
+        default: "version-16"
 
 jobs:
   build:
@@ -33,7 +33,7 @@ jobs:
 
     env:
       IMAGE_NAME: ghcr.io/jeffreyapi/frappe
-      FRAPPE_VERSION: ${{ github.event.inputs.frappe_version || 'version-15' }}
+      FRAPPE_VERSION: ${{ github.event.inputs.frappe_version || 'version-16' }}
 
     steps:
       - name: Checkout

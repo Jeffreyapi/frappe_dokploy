@@ -107,6 +107,12 @@ services:
       PROXY_READ_TIMEOUT:         ${PROXY_READ_TIMEOUT:-120}
     ports:
       - "${FRONTEND_PORT:-8080}:8080"
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.${APP_NAME}.rule=Host(`${SITE_NAME}`)"
+      - "traefik.http.routers.${APP_NAME}.tls=true"
+      - "traefik.http.routers.${APP_NAME}.tls.certresolver=letsencrypt"
+      - "traefik.http.services.${APP_NAME}.loadbalancer.server.port=8080"
     networks:
       - bench-network
       - dokploy-network
@@ -232,6 +238,7 @@ networks:
 # ─────────────────────────────────────────────────────────────────────────────
 # Variables clés                Description                        Défaut
 # ─────────────────────────────────────────────────────────────────────────────
+# APP_NAME                     Nom de l'app Frappe                (requis, pour labels Traefik)
 # IMAGE_NAME                   Image Docker à utiliser            ghcr.io/jeffreyapi/frappe
 # APP_VERSION                  Tag de l'image                     latest
 # SITE_NAME                    Nom du site Frappe                 (requis)
