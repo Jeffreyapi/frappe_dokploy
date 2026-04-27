@@ -31,17 +31,23 @@ set -euo pipefail
 PROJECT_ROOT="${PWD}"
 
 # ── Charger .env si présent ───────────────────────────────────────────────────
-if [ -f "$PROJECT_ROOT/.env" ]; then
+# Utilise grep pour ne sourcer que les lignes KEY=VALUE valides :
+#   - ignore les commentaires (#)
+#   - ignore les lignes vides
+#   - ignore les lignes sans = ou dont la clé n'est pas un identifiant valide
+_load_env() {
+  local file="$1"
   set -a
   # shellcheck disable=SC1091
-  source "$PROJECT_ROOT/.env"
+  source <(grep -E '^[A-Za-z_][A-Za-z0-9_]*=' "$file" | grep -v '^[[:space:]]*#')
   set +a
+}
+
+if [ -f "$PROJECT_ROOT/.env" ]; then
+  _load_env "$PROJECT_ROOT/.env"
 elif [ -f "$PROJECT_ROOT/.env.example" ]; then
   echo "[warn] .env absent — utilisation de .env.example pour les valeurs par défaut"
-  set -a
-  # shellcheck disable=SC1091
-  source "$PROJECT_ROOT/.env.example"
-  set +a
+  _load_env "$PROJECT_ROOT/.env.example"
 fi
 
 # ── Variables avec valeurs par défaut ─────────────────────────────────────────
