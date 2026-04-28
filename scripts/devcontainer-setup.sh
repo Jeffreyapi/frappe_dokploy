@@ -217,12 +217,17 @@ if [ ! -f "$WORKSPACE/pyproject.toml" ] && [ ! -f "$WORKSPACE/setup.py" ]; then
   [ -L "$BENCH_DIR/apps/$APP_NAME" ] && rm "$BENCH_DIR/apps/$APP_NAME"
   [ -d "$BENCH_DIR/apps/$APP_NAME" ] && rm -rf "$BENCH_DIR/apps/$APP_NAME"
 
-  printf "%s\n%s\n%s\n%s\n%s\nN\n" \
+  # 7 prompts bench new-app (v16) :
+  #  1. App Title       2. App Description  3. App Publisher
+  #  4. App Email       5. App License      6. GitHub Workflow [y/N]
+  #  7. Branch Name     (toujours posé, même si réponse N au prompt 6)
+  printf "%s\n%s\n%s\n%s\n%s\nN\n%s\n" \
     "$_safe_title" \
     "$_safe_desc" \
     "$APP_PUBLISHER" \
     "$APP_EMAIL" \
     "$APP_LICENSE" \
+    "$FRAPPE_BRANCH" \
     | bench new-app "$APP_NAME"
 
   ok "bench new-app OK"
