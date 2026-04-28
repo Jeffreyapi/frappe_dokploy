@@ -136,7 +136,7 @@ python frappe_deploy/scripts/fd.py
 Le `devcontainer.json` généré par le TUI définit deux hooks :
 
 ```json
-"initializeCommand": "git submodule update --init --recursive",
+"initializeCommand": "git submodule update --init frappe_deploy",
 "postCreateCommand": "bash frappe_deploy/scripts/devcontainer-setup.sh"
 ```
 
