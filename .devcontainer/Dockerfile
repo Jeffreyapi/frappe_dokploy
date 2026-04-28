@@ -4,7 +4,7 @@
 #  Stack :
 #    - Ubuntu 24.04
 #    - Python 3.14  (via deadsnakes PPA — requis par Frappe v16)
-#    - Node.js 18 LTS
+#    - Node.js 24 LTS
 #    - MariaDB 10.6
 #    - Redis 7
 # =============================================================================
@@ -48,8 +48,8 @@ RUN apt-get update && apt-get install -y \
 # ── pip pour Python 3.14 ─────────────────────────────────────────────────────
 RUN curl -sS https://bootstrap.pypa.io/get-pip.py | python3.14
 
-# ── Node.js 18 LTS + Yarn ────────────────────────────────────────────────────
-RUN curl -fsSL https://deb.nodesource.com/setup_18.x | bash - && \
+# ── Node.js 24 LTS + Yarn ────────────────────────────────────────────────────
+RUN curl -fsSL https://deb.nodesource.com/setup_24.x | bash - && \
     apt-get install -y nodejs && \
     npm install -g yarn && \
     rm -rf /var/lib/apt/lists/*
