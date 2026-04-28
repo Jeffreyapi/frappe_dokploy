@@ -203,13 +203,23 @@ PYEOF
 if [ ! -f "$WORKSPACE/pyproject.toml" ] && [ ! -f "$WORKSPACE/setup.py" ]; then
   log "bench new-app $APP_NAME (non-interactif)..."
 
+  # Sanitiser les valeurs : bench n'accepte que [A-Za-z0-9 _] pour le titre,
+  # et un email valide. On nettoie plutôt que de bloquer.
+  _safe_title=$(echo "$APP_TITLE" | tr -cd 'A-Za-z0-9 _' | sed 's/^[^A-Za-z]*//')
+  [ -z "$_safe_title" ] && _safe_title="$APP_NAME"
+  _safe_desc=$(echo "$APP_DESCRIPTION" | tr -cd 'A-Za-z0-9 _.-')
+  [ -z "$_safe_desc" ] && _safe_desc="$APP_NAME"
+  # Email : si invalide (pas de @), utiliser le fallback
+  echo "$APP_EMAIL" | grep -qE '^[^@]+@[^@]+\.[^@]+$' \
+    || APP_EMAIL="admin@easytalents.fr"
+
   # Libérer le slot apps/ si un symlink ou dossier existe déjà
   [ -L "$BENCH_DIR/apps/$APP_NAME" ] && rm "$BENCH_DIR/apps/$APP_NAME"
   [ -d "$BENCH_DIR/apps/$APP_NAME" ] && rm -rf "$BENCH_DIR/apps/$APP_NAME"
 
   printf "%s\n%s\n%s\n%s\n%s\nN\n" \
-    "$APP_TITLE" \
-    "$APP_DESCRIPTION" \
+    "$_safe_title" \
+    "$_safe_desc" \
     "$APP_PUBLISHER" \
     "$APP_EMAIL" \
     "$APP_LICENSE" \
