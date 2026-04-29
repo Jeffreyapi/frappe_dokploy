@@ -328,11 +328,25 @@ PYEOF
 # ═════════════════════════════════════════════════════════════════════════════
 # 11. Finalisation
 # ═════════════════════════════════════════════════════════════════════════════
-bench --site "$SITE_NAME" clear-cache
+bench --site "$SITE_NAME" clear-cache 2>/dev/null || true
+
+# ── Vérifier l'état réel de l'installation ───────────────────────────────────
+_site_apps="$BENCH_DIR/sites/$SITE_NAME/apps.txt"
+_app_installed=0
+if [ -f "$_site_apps" ] && grep -qx "$APP_NAME" "$_site_apps" 2>/dev/null; then
+  _app_installed=1
+fi
 
 echo ""
 log "══════════════════════════════════════════════════════════"
-log "  ✓ Environnement prêt !"
+if [ "$_app_installed" -eq 1 ]; then
+  log "  ✓ Environnement prêt !"
+else
+  log "  ⚠  Environnement partiellement prêt"
+  log "     $APP_NAME n'est PAS installé sur le site."
+  log "     Relancer le setup après un bump du submodule :"
+  log "       bash frappe_deploy/scripts/rebuild.sh"
+fi
 log ""
 log "  Lancer le serveur :"
 log "    cd ~/frappe-bench && bench start"
