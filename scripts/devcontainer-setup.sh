@@ -257,11 +257,21 @@ else
 fi
 
 # ═════════════════════════════════════════════════════════════════════════════
-# 8. pip install -e (mode éditable)
+# 8. pip install -e (mode éditable) + enregistrement dans apps.txt
 # ═════════════════════════════════════════════════════════════════════════════
 log "pip install -e..."
 "$BENCH_DIR/env/bin/pip" install -e "$BENCH_DIR/apps/$APP_NAME" --quiet
 ok "pip install -e OK"
+
+# Enregistrer l'app dans le registre interne de bench (apps/apps.txt).
+# bench new-app/get-app le fait automatiquement ; le symlink bypass cette étape.
+_apps_txt="$BENCH_DIR/apps/apps.txt"
+if ! grep -qx "$APP_NAME" "$_apps_txt" 2>/dev/null; then
+  echo "$APP_NAME" >> "$_apps_txt"
+  ok "App $APP_NAME enregistrée dans apps.txt"
+else
+  skip "$APP_NAME déjà dans apps.txt"
+fi
 
 # ═════════════════════════════════════════════════════════════════════════════
 # 9. bench new-site (100% non-interactif)
