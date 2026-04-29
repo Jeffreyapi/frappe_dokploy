@@ -110,7 +110,7 @@ def gen_devcontainer_json(app_name: str) -> list[str]:
   }},
   "remoteUser": "frappe",
   "workspaceFolder": "/workspaces/{app_name}",
-  "initializeCommand": "git submodule update --init frappe_deploy",
+  "initializeCommand": "git submodule update --init --recursive",
   "postCreateCommand": "bash frappe_deploy/scripts/devcontainer-setup.sh",
   "forwardPorts": [8000, 9000],
   "remoteEnv": {{
