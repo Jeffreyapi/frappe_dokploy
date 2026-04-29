@@ -2,11 +2,14 @@
 """
 TUI frappe_dokploy — initialisation d'un repo d'app Frappe.
 
-Génère uniquement les 4 fichiers projet-spécifiques :
-  - .env.example               (toutes les variables dev + prod)
-  - apps.json                  (template avec ${GH_PAT})
-  - .devcontainer/devcontainer.json  (pointe vers le submodule)
-  - .github/workflows/publish.yml   (appelle le workflow réutilisable)
+Génère les 7 fichiers projet-spécifiques :
+  - .env.example                        (variables dev + prod)
+  - apps.json                           (template avec ${GH_PAT})
+  - .devcontainer/devcontainer.json     (pointe vers le submodule)
+  - .github/workflows/publish.yml       (appelle le workflow réutilisable)
+  - .vscode/launch.json                 (Run & Debug + Tests)
+  - .vscode/settings.json               (Python, SQLTools, formatage)
+  - .vscode/extensions.json             (extensions recommandées)
 
 Tout le reste (Dockerfile, docker-compose, scripts) vit dans le submodule
 et n'est jamais copié.
@@ -118,12 +121,15 @@ def gen_devcontainer_json(app_name: str) -> list[str]:
       "extensions": [
         "ms-python.python",
         "ms-python.debugpy",
+        "ms-python.black-formatter",
+        "ms-python.isort",
+        "ms-python.pylint",
         "mtxr.sqltools",
-        "mtxr.sqltools-driver-mysql"
-      ],
-      "settings": {{
-        "python.defaultInterpreterPath": "/home/frappe/frappe-bench/env/bin/python"
-      }}
+        "mtxr.sqltools-driver-mysql",
+        "anthropics.claude-code",
+        "github.copilot",
+        "github.copilot-chat"
+      ]
     }}
   }},
   "mounts": [
@@ -161,6 +167,145 @@ jobs:
     secrets: inherit
 """
     dst.write_text(content, encoding="utf-8")
+    return [f"  ✓  {dst}"]
+
+
+def gen_vscode_launch(app_name: str) -> list[str]:
+    """Génère .vscode/launch.json — Run & Debug + Tests."""
+    dst = Path(".vscode/launch.json")
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    bench = "/home/frappe/frappe-bench"
+    data = {
+        "version": "0.2.0",
+        "configurations": [
+            {
+                "name": "Frappe: Web Server",
+                "type": "debugpy",
+                "request": "launch",
+                "program": f"{bench}/apps/frappe/frappe/utils/bench_helper.py",
+                "args": ["frappe", "serve", "--port", "8000", "--noreload", "--nothreading"],
+                "cwd": f"{bench}/sites",
+                "env": {"DEV_SERVER": "1"},
+                "justMyCode": False,
+                "console": "integratedTerminal",
+            },
+            {
+                "name": "Frappe: Run Current Test File",
+                "type": "debugpy",
+                "request": "launch",
+                "program": f"{bench}/apps/frappe/frappe/utils/bench_helper.py",
+                "args": [
+                    "frappe", "--site", "development.localhost",
+                    "run-tests", "--app", app_name,
+                    "--module", "${fileBasenameNoExtension}",
+                ],
+                "cwd": f"{bench}",
+                "env": {"DEV_SERVER": "1"},
+                "justMyCode": False,
+                "console": "integratedTerminal",
+            },
+            {
+                "name": "Frappe: Run All App Tests",
+                "type": "debugpy",
+                "request": "launch",
+                "program": f"{bench}/apps/frappe/frappe/utils/bench_helper.py",
+                "args": [
+                    "frappe", "--site", "development.localhost",
+                    "run-tests", "--app", app_name,
+                ],
+                "cwd": f"{bench}",
+                "env": {"DEV_SERVER": "1"},
+                "justMyCode": False,
+                "console": "integratedTerminal",
+            },
+        ],
+    }
+    dst.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    return [f"  ✓  {dst}"]
+
+
+def gen_vscode_settings(app_name: str, db_pw: str) -> list[str]:
+    """Génère .vscode/settings.json — Python, SQLTools, formatage."""
+    dst = Path(".vscode/settings.json")
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    bench = "/home/frappe/frappe-bench"
+    data = {
+        # ── Python ────────────────────────────────────────────────────────────
+        "python.defaultInterpreterPath": f"{bench}/env/bin/python",
+        "python.terminal.activateEnvironment": True,
+        "[python]": {
+            "editor.defaultFormatter": "ms-python.black-formatter",
+            "editor.formatOnSave": True,
+            "editor.codeActionsOnSave": {
+                "source.organizeImports": "explicit",
+            },
+        },
+        "isort.args": ["--profile", "black"],
+        "pylint.args": [
+            f"--init-hook=import sys; sys.path.insert(0, '{bench}/apps/frappe')",
+        ],
+        # ── Tests ─────────────────────────────────────────────────────────────
+        "python.testing.pytestEnabled": False,
+        "python.testing.unittestEnabled": False,
+        # Les tests Frappe se lancent via bench run-tests (voir launch.json)
+        # ── SQLTools — connexion MariaDB dev ──────────────────────────────────
+        "sqltools.connections": [
+            {
+                "name": "MariaDB dev",
+                "driver": "MySQL",
+                "server": "127.0.0.1",
+                "port": 3306,
+                "username": "root",
+                "password": db_pw,
+                "askForPassword": False,
+                "connectionTimeout": 30,
+            },
+        ],
+        "sqltools.autoOpenSessionFiles": False,
+        # ── Éditeur ───────────────────────────────────────────────────────────
+        "editor.rulers": [100],
+        "editor.tabSize": 1,
+        "files.exclude": {
+            "**/__pycache__": True,
+            "**/*.pyc": True,
+        },
+        # ── Terminal ──────────────────────────────────────────────────────────
+        "terminal.integrated.defaultProfile.linux": "bash",
+        "terminal.integrated.env.linux": {
+            "PATH": f"{bench}/env/bin:/home/frappe/.local/bin:${{env:PATH}}",
+        },
+        "debug.node.autoAttach": "disabled",
+    }
+    dst.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    return [f"  ✓  {dst}"]
+
+
+def gen_vscode_extensions(app_name: str) -> list[str]:
+    """Génère .vscode/extensions.json — extensions recommandées."""
+    dst = Path(".vscode/extensions.json")
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    data = {
+        "recommendations": [
+            # Python
+            "ms-python.python",
+            "ms-python.debugpy",
+            "ms-python.black-formatter",
+            "ms-python.isort",
+            "ms-python.pylint",
+            # Base de données
+            "mtxr.sqltools",
+            "mtxr.sqltools-driver-mysql",
+            # IA
+            "anthropics.claude-code",
+            "github.copilot",
+            "github.copilot-chat",
+            # Qualité / utilitaires
+            "visualstudioexptteam.vscodeintellicode",
+            "ms-vscode.live-server",
+            "eamodio.gitlens",
+        ],
+    }
+    dst.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
     return [f"  ✓  {dst}"]
 
 
@@ -298,17 +443,23 @@ class FDApp(App):
         self._logs.clear()
         self._push([f"── Init : {app_name} ──", ""])
         try:
-            self._push(["[1/4] .env.example…"])
+            self._push(["[1/7] .env.example…"])
             self._push(gen_env_example(
                 app_name, title, desc, publisher, email, license_,
                 python_ver, frappe_branch, site, admin_pw, db_pw, image_name,
             ))
-            self._push(["", "[2/4] apps.json…"])
+            self._push(["", "[2/7] apps.json…"])
             self._push(gen_apps_json(app_name, owner))
-            self._push(["", "[3/4] .devcontainer/devcontainer.json…"])
+            self._push(["", "[3/7] .devcontainer/devcontainer.json…"])
             self._push(gen_devcontainer_json(app_name))
-            self._push(["", "[4/4] .github/workflows/publish.yml…"])
+            self._push(["", "[4/7] .github/workflows/publish.yml…"])
             self._push(gen_publish_workflow(app_name, owner, frappe_branch))
+            self._push(["", "[5/7] .vscode/launch.json…"])
+            self._push(gen_vscode_launch(app_name))
+            self._push(["", "[6/7] .vscode/settings.json…"])
+            self._push(gen_vscode_settings(app_name, db_pw))
+            self._push(["", "[7/7] .vscode/extensions.json…"])
+            self._push(gen_vscode_extensions(app_name))
             self._push(["", "✅  Fait ! Clique sur 'Étapes suivantes' pour la suite."])
         except Exception as exc:
             self._push([f"", f"❌  Erreur : {exc}"])
@@ -324,16 +475,17 @@ class FDApp(App):
             f"       git add -A && git commit -m 'init: {app_name}' && git push",
             "",
             "  4. Ouvrir un Codespace",
-            "     → git submodule update --init  (si pas fait automatiquement)",
             "     → le postCreateCommand lance frappe_deploy/scripts/devcontainer-setup.sh",
+            "     → F5 pour démarrer le serveur avec debugpy",
+            "     → Ctrl+Shift+P → SQLTools: Connect → MariaDB dev",
             "",
-            "  5. Une fois le Codespace prêt, si 1ère création de l'app :",
+            "  5. Si setup incomplet ou après un bump du submodule :",
+            "       bash frappe_deploy/scripts/rebuild.sh",
+            "",
+            "  6. Première fois — committer l'app scaffoldée :",
             f"       git add {app_name}/ pyproject.toml",
             f"       git commit -m 'init: scaffold {app_name}'",
             "       git push",
-            "",
-            "  Lancer le serveur :",
-            "    cd ~/frappe-bench && bench start",
         ])
 
 

@@ -68,7 +68,7 @@ frappe_deploy/                        ← frappe_dokploy cloné en submodule
     └── nginx-template.conf
 ```
 
-### Ce que génère le TUI (4 fichiers projet-spécifiques)
+### Ce que génère le TUI (7 fichiers projet-spécifiques)
 
 ```
 mon_app/
@@ -76,8 +76,12 @@ mon_app/
 ├── apps.json                         # apps à embarquer dans l'image Docker
 ├── .devcontainer/
 │   └── devcontainer.json             # pointe vers frappe_deploy pour le Dockerfile et le setup
-└── .github/workflows/
-    └── publish.yml                   # appelle le workflow réutilisable build-image.yml
+├── .github/workflows/
+│   └── publish.yml                   # appelle le workflow réutilisable build-image.yml
+└── .vscode/
+    ├── launch.json                   # Run & Debug (web server, tests unitaires)
+    ├── settings.json                 # Python, SQLTools MariaDB, Black, isort
+    └── extensions.json               # extensions recommandées
 ```
 
 ### Structure complète après le premier Codespace
