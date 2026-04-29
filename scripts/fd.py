@@ -336,9 +336,10 @@ class FDApp(App):
     .form-grid Input:focus { border: tall #58a6ff; }
 
     #btn-row  { height: 3; margin-top: 1; margin-bottom: 1; }
-    #btn-init { width: 1fr; }
-    #btn-next { width: 1fr; }
-    #btn-quit { width: 12; }
+    #btn-init   { width: 1fr; }
+    #btn-vscode { width: 1fr; }
+    #btn-next   { width: 1fr; }
+    #btn-quit   { width: 12; }
 
     #output {
         height: 14; border: solid #30363d; background: #0d1117;
@@ -396,6 +397,7 @@ class FDApp(App):
             # ── Actions ───────────────────────────────────────────────
             with Horizontal(id="btn-row"):
                 yield Button("▶  Initialiser", id="btn-init", variant="success")
+                yield Button("⚙  VS Code", id="btn-vscode", variant="warning")
                 yield Button("Étapes suivantes", id="btn-next", variant="primary")
                 yield Button("Quitter", id="btn-quit", variant="error")
 
@@ -409,6 +411,8 @@ class FDApp(App):
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "btn-init":
             self._do_init()
+        elif event.button.id == "btn-vscode":
+            self._do_vscode()
         elif event.button.id == "btn-next":
             self._show_next_steps()
         elif event.button.id == "btn-quit":
@@ -463,6 +467,30 @@ class FDApp(App):
             self._push(["", "✅  Fait ! Clique sur 'Étapes suivantes' pour la suite."])
         except Exception as exc:
             self._push([f"", f"❌  Erreur : {exc}"])
+
+    def _do_vscode(self) -> None:
+        app_name = self._v("app-name", self._default_name)
+        db_pw    = self.query_one("#db-pw", Input).value or "123"
+
+        self._logs.clear()
+        self._push([f"── VS Code : {app_name} ──", ""])
+        self._push(["Génère uniquement .vscode/ (ne touche à rien d'autre)", ""])
+        try:
+            self._push(["[1/3] .vscode/launch.json…"])
+            self._push(gen_vscode_launch(app_name))
+            self._push(["", "[2/3] .vscode/settings.json…"])
+            self._push(gen_vscode_settings(app_name, db_pw))
+            self._push(["", "[3/3] .vscode/extensions.json…"])
+            self._push(gen_vscode_extensions(app_name))
+            self._push([
+                "",
+                "✅  Config VS Code générée !",
+                "",
+                "  Committer :",
+                f"    git add .vscode/ && git commit -m 'chore: add vscode config'",
+            ])
+        except Exception as exc:
+            self._push(["", f"❌  Erreur : {exc}"])
 
     def _show_next_steps(self) -> None:
         app_name = self._v("app-name", self._default_name)
