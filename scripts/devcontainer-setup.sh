@@ -155,6 +155,9 @@ if ! grep -q '"db_host"' sites/common_site_config.json 2>/dev/null; then
   bench set-config -g  redis_queue    "redis://127.0.0.1:6379"
   bench set-config -g  redis_socketio "redis://127.0.0.1:6379"
   bench set-config -gp developer_mode 1
+  # serve_default_site : évite le 401 quand l'URL Codespace ne correspond pas
+  # au SITE_NAME (ex : port forwarding ajoute un Authorization header parasite)
+  bench set-config -g  serve_default_site true
   ok "Config bench OK"
 else
   skip "common_site_config déjà configuré"
@@ -263,15 +266,27 @@ log "pip install -e..."
 "$BENCH_DIR/env/bin/pip" install -e "$BENCH_DIR/apps/$APP_NAME" --quiet
 ok "pip install -e OK"
 
-# Enregistrer l'app dans le registre interne de bench (apps/apps.txt).
-# bench new-app/get-app le fait automatiquement ; le symlink bypass cette étape.
+# bench get-app met à jour DEUX fichiers ; le symlink bypass les deux.
+# Il faut reconstruire apps/apps.txt ET sites/apps.txt.
+# frappe doit TOUJOURS être en premier dans les deux.
+
 _apps_txt="$BENCH_DIR/apps/apps.txt"
-if ! grep -qx "$APP_NAME" "$_apps_txt" 2>/dev/null; then
-  echo "$APP_NAME" >> "$_apps_txt"
-  ok "App $APP_NAME enregistrée dans apps.txt"
-else
-  skip "$APP_NAME déjà dans apps.txt"
-fi
+_sites_apps_txt="$BENCH_DIR/sites/apps.txt"
+
+_rebuild_apps_list() {
+  local file="$1"
+  {
+    echo "frappe"
+    [ -f "$file" ] && grep -vxE "frappe|$APP_NAME" "$file" || true
+    echo "$APP_NAME"
+  } | awk '!seen[$0]++'
+}
+
+_rebuild_apps_list "$_apps_txt"       > /tmp/_apps_rebuild.txt && mv /tmp/_apps_rebuild.txt "$_apps_txt"
+_rebuild_apps_list "$_sites_apps_txt" > /tmp/_apps_rebuild.txt && mv /tmp/_apps_rebuild.txt "$_sites_apps_txt"
+
+ok "apps/apps.txt   → $(tr '\n' ' ' < "$_apps_txt")"
+ok "sites/apps.txt  → $(tr '\n' ' ' < "$_sites_apps_txt")"
 
 # ═════════════════════════════════════════════════════════════════════════════
 # 9. bench new-site (100% non-interactif)
