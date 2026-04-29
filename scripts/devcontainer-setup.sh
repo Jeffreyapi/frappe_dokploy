@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-set -euo pipefail
+# Note: pas de set -e ici — une erreur de setup ne doit jamais crasher le container.
+# Le Codespace reste accessible et on peut relancer avec rebuild.sh.
+set -uo pipefail
 
 # =============================================================================
 #  devcontainer-setup.sh — environnement de développement Frappe
