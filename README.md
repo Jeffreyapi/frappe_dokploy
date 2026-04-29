@@ -161,6 +161,20 @@ Le `devcontainer.json` généré par le TUI définit deux hooks :
 
 Le script lit `.env` (ou `.env.example` si `.env` absent) depuis la racine du projet.
 
+### Relancer / reconstruire l'environnement
+
+Si le setup a échoué à mi-chemin ou après un bump du submodule :
+
+```bash
+# Relance idempotente — saute les étapes déjà faites
+bash frappe_deploy/scripts/rebuild.sh
+
+# Repart de zéro — supprime ~/frappe-bench et recommence
+bash frappe_deploy/scripts/rebuild.sh --reset
+```
+
+`rebuild.sh` pull automatiquement le dernier commit de `frappe_deploy` avant de relancer.
+
 ### Ouvrir le devcontainer
 
 **VS Code local :**
