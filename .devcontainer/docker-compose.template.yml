@@ -1,0 +1,46 @@
+name: APP_NAME-dev
+services:
+  workspace:
+    build:
+      context: ../frappe_deploy/.devcontainer
+    command: sleep infinity
+    volumes:
+      - ..:/workspaces/APP_NAME:cached
+      - bench-home:/home/frappe
+    depends_on:
+      db:
+        condition: service_healthy
+      redis-cache:
+        condition: service_healthy
+      redis-queue:
+        condition: service_healthy
+  db:
+    image: mariadb:11.8
+    env_file: ../.env
+    environment:
+      MARIADB_ROOT_HOST: "%"
+    entrypoint: [bash, -ec, 'export MARIADB_ROOT_PASSWORD="$${DB_ROOT_PASSWORD:?}"; exec docker-entrypoint.sh mariadbd --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci']
+    volumes:
+      - db-data:/var/lib/mysql
+    healthcheck:
+      test: [CMD, healthcheck.sh, --connect, --innodb_initialized]
+      interval: 3s
+      timeout: 5s
+      retries: 40
+  redis-cache:
+    image: redis:7-alpine
+    healthcheck:
+      test: [CMD, redis-cli, ping]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+  redis-queue:
+    image: redis:7-alpine
+    healthcheck:
+      test: [CMD, redis-cli, ping]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+volumes:
+  bench-home:
+  db-data:

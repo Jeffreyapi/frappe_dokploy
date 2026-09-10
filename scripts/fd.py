@@ -18,6 +18,7 @@ et n'est jamais copié.
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
 
 try:
@@ -59,11 +60,17 @@ APP_LICENSE={license_}
 # ── Frappe ────────────────────────────────────────────────────────────────────
 PYTHON_VERSION={python_version}
 FRAPPE_BRANCH={frappe_branch}
+FRAPPE_VERSION={frappe_branch}
+FRAPPE_REVISION=988e54f3c4c291e2077a83809663f123731abe76
+DEPLOYMENT_ID={app_name.replace("_", "-")}-dev
+DB_HOST=db
+REDIS_CACHE=redis-cache:6379
+REDIS_QUEUE=redis-queue:6379
 
 # ── Dev (devcontainer / Codespaces) ───────────────────────────────────────────
 SITE_NAME={site}
-DB_ROOT_PASSWORD={db_pw}
-ADMIN_PASSWORD={admin_pw}
+DB_ROOT_PASSWORD=changeit
+ADMIN_PASSWORD=changeit
 
 # ── Production (docker compose) ───────────────────────────────────────────────
 # IMAGE_NAME={image_name}
@@ -87,91 +94,54 @@ def gen_apps_json(app_name: str, github_owner: str) -> list[str]:
     apps_path = Path("apps.json")
     if apps_path.exists():
         return [f"  —  apps.json déjà présent, ignoré"]
-    data = [
-        {
-            "url": f"https://${{GH_PAT}}:x-oauth-basic@github.com/{github_owner}/{app_name}.git",
-            "branch": "main",
-        }
-    ]
+    data = [{"name": app_name, "path": "."}]
     apps_path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
     return [f"  ✓  apps.json  (remplacer {github_owner} si nécessaire)"]
 
 
 def gen_devcontainer_json(app_name: str) -> list[str]:
-    """Génère .devcontainer/devcontainer.json — pointe vers le submodule."""
     dst = Path(".devcontainer/devcontainer.json")
     dst.parent.mkdir(parents=True, exist_ok=True)
-    content = f"""\
-{{
-  "name": "{app_name}",
-  "build": {{
-    "dockerfile": "../frappe_deploy/.devcontainer/Dockerfile",
-    "context": ".."
-  }},
-  "remoteUser": "frappe",
-  "workspaceFolder": "/workspaces/{app_name}",
-  "initializeCommand": "git submodule update --init --recursive",
-  "postCreateCommand": "bash frappe_deploy/scripts/devcontainer-setup.sh || echo '⚠ Setup incomplet — relancer : bash frappe_deploy/scripts/rebuild.sh'",
-  "forwardPorts": [8000, 9000],
-  "portsAttributes": {{
-    "8000": {{ "label": "Frappe Web", "onAutoForward": "openPreview", "visibility": "public" }},
-    "9000": {{ "label": "WebSocket", "visibility": "public" }}
-  }},
-  "remoteEnv": {{
-    "PATH": "/home/frappe/frappe-bench/env/bin:/home/frappe/.local/bin:${{containerEnv:PATH}}"
-  }},
-  "customizations": {{
-    "vscode": {{
-      "extensions": [
-        "ms-python.python",
-        "ms-python.debugpy",
-        "ms-python.black-formatter",
-        "ms-python.isort",
-        "ms-python.pylint",
-        "mtxr.sqltools",
-        "mtxr.sqltools-driver-mysql",
-        "anthropics.claude-code",
-        "github.copilot",
-        "github.copilot-chat"
-      ]
-    }}
-  }},
-  "mounts": [
-    "source=${{localEnv:HOME}}${{localEnv:USERPROFILE}}/.ssh,target=/home/frappe/.ssh,type=bind,consistency=cached"
-  ]
-}}
-"""
-    dst.write_text(content, encoding="utf-8")
-    return [f"  ✓  {dst}"]
+    data = {
+        "name": app_name,
+        "dockerComposeFile": "docker-compose.yml",
+        "service": "workspace",
+        "workspaceFolder": f"/workspaces/{app_name}",
+        "initializeCommand": "git submodule update --init --recursive",
+        "postCreateCommand": "bash frappe_deploy/scripts/devcontainer-setup.sh",
+        "remoteUser": "frappe",
+        "shutdownAction": "stopCompose",
+        "forwardPorts": [8000, 9000],
+        "customizations": {"vscode": {"extensions": ["ms-python.python", "ms-python.debugpy", "charliermarsh.ruff"]}},
+    }
+    dst.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    template = (ROOT / ".devcontainer" / "docker-compose.template.yml").read_text(encoding="utf-8")
+    compose = dst.with_name("docker-compose.yml")
+    compose.write_text(template.replace("APP_NAME", app_name), encoding="utf-8")
+    return [f"  ✓  {dst}", f"  ✓  {compose}"]
 
 
 def gen_publish_workflow(app_name: str, github_owner: str, frappe_branch: str) -> list[str]:
-    """Génère .github/workflows/publish.yml — appelle le workflow réutilisable."""
     dst = Path(".github/workflows/publish.yml")
     dst.parent.mkdir(parents=True, exist_ok=True)
-    content = f"""\
-name: Build & publish
-
+    revision = subprocess.check_output(["git", "-C", str(ROOT), "rev-parse", "HEAD"], text=True).strip()
+    content = f"""name: Validate and publish
 on:
+  pull_request:
   push:
     branches: [main]
-    tags: ["v*"]
-  workflow_dispatch:
-    inputs:
-      version:
-        description: "Version tag (ex: v1.0.0)"
-        required: true
-
+permissions:
+  contents: read
+  packages: write
 jobs:
   build:
-    uses: {github_owner}/frappe_dokploy/.github/workflows/build-image.yml@main
+    uses: {github_owner}/frappe_dokploy/.github/workflows/build-image.yml@{revision}
     with:
-      image-name: ghcr.io/{github_owner}/{app_name}
+      image-name: ghcr.io/{github_owner.lower()}/{app_name}
       frappe-version: {frappe_branch}
-    secrets: inherit
 """
     dst.write_text(content, encoding="utf-8")
-    return [f"  ✓  {dst}"]
+    return [f"  ✓  {dst}", "  Required: add tests/smoke.sh before publishing."]
 
 
 def gen_vscode_launch(app_name: str) -> list[str]:
@@ -260,8 +230,7 @@ def gen_vscode_settings(app_name: str, db_pw: str) -> list[str]:
                 "server": "127.0.0.1",
                 "port": 3306,
                 "username": "root",
-                "password": db_pw,
-                "askForPassword": False,
+                "askForPassword": True,
                 "connectionTimeout": 30,
             },
         ],
@@ -372,7 +341,7 @@ class FDApp(App):
                 yield Label("Python version")
                 yield Input("python3.14", id="python-version")
                 yield Label("Frappe branch")
-                yield Input("version-16", id="frappe-branch")
+                yield Input("v16.33.1", id="frappe-branch")
 
             # ── MÉTADONNÉES ───────────────────────────────────────────
             yield Label("MÉTADONNÉES", classes="section-label")
@@ -437,7 +406,7 @@ class FDApp(App):
         app_name      = self._v("app-name",       self._default_name)
         owner         = self._v("github-owner",    "Jeffreyapi")
         python_ver    = self._v("python-version",  "python3.14")
-        frappe_branch = self._v("frappe-branch",   "version-16")
+        frappe_branch = self._v("frappe-branch",   "v16.33.1")
         title         = self._v("app-title",       app_name)
         desc          = self._v("app-desc",        app_name)
         publisher     = self._v("app-publisher",   "EasyTalents")

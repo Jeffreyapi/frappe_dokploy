@@ -1,66 +1,13 @@
-# =============================================================================
-#  Devcontainer Dockerfile — environnement de DÉVELOPPEMENT Frappe v16
-#
-#  Stack :
-#    - Ubuntu 24.04
-#    - Python 3.14  (via deadsnakes PPA — requis par Frappe v16)
-#    - Node.js 24 LTS
-#    - MariaDB 10.6
-#    - Redis 7
-# =============================================================================
-
-FROM ubuntu:24.04
-
-ENV DEBIAN_FRONTEND=noninteractive
-
-# ── Python 3.14 via deadsnakes PPA ───────────────────────────────────────────
-RUN apt-get update && apt-get install -y software-properties-common && \
-    add-apt-repository ppa:deadsnakes/ppa && \
-    apt-get update && apt-get install -y \
-    python3.14 \
-    python3.14-dev \
-    python3.14-venv \
- && rm -rf /var/lib/apt/lists/*
-
-# ── Dépendances système ───────────────────────────────────────────────────────
-RUN apt-get update && apt-get install -y \
-    sudo \
-    curl \
-    git \
-    build-essential \
-    libffi-dev \
-    libssl-dev \
-    pkg-config \
-    # MariaDB 10.6
-    mariadb-server \
-    mariadb-client \
-    libmariadb-dev-compat \
-    libmariadb-dev \
-    # Redis
-    redis-server \
-    # Utilitaires
-    wkhtmltopdf \
-    xvfb \
-    libfontconfig \
-    cron \
- && rm -rf /var/lib/apt/lists/*
-
-# ── pip pour Python 3.14 ─────────────────────────────────────────────────────
-RUN curl -sS https://bootstrap.pypa.io/get-pip.py | python3.14
-
-# ── Node.js 24 LTS + Yarn ────────────────────────────────────────────────────
-RUN curl -fsSL https://deb.nodesource.com/setup_24.x | bash - && \
-    apt-get install -y nodejs && \
-    npm install -g yarn && \
-    rm -rf /var/lib/apt/lists/*
-
-# ── honcho (Procfile runner pour bench start) ─────────────────────────────────
-RUN python3.14 -m pip install honcho
-
-# ── User "frappe" — cohérent avec l'image ghcr.io/frappe/base ────────────────
-RUN useradd -m -s /bin/bash frappe && \
-    echo "frappe ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
-
+# Python 3.14 / Node 24 and build dependencies from the Frappe builder.
+# MariaDB 11.8 and Redis 7 run as separate Compose services.
+ARG BUILD_IMAGE=ghcr.io/frappe/build@sha256:9e876dcf4f7b5b992ed4ab86bc0079c2dc84f5d2df7fe076e43b4cbbd2772163
+FROM ${BUILD_IMAGE}
+USER root
+RUN apt-get update && apt-get install -y --no-install-recommends sudo && \
+    rm -rf /var/lib/apt/lists/* && \
+    echo "frappe ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/frappe && \
+    python3 -m pip install honcho debugpy
 USER frappe
-WORKDIR /workspaces
-ENV PATH="/home/frappe/.local/bin:${PATH}"
+ENV PATH="/home/frappe/frappe-bench/env/bin:/home/frappe/.local/bin:${PATH}"
+WORKDIR /workspaces/hermes_control
+CMD ["sleep", "infinity"]

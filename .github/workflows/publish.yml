@@ -1,90 +1,21 @@
-# =============================================================================
-#  publish.yml — CI standalone de frappe_dokploy
-#
-#  Ce workflow sert à publier l'image de base frappe_dokploy (ghcr.io/jeffreyapi/frappe).
-#  Pour construire l'image d'un projet réel, chaque repo app contient son propre
-#  publish.yml qui appelle le workflow réutilisable build-image.yml (workflow_call).
-#
-#  Déclenché :
-#    - manuellement (workflow_dispatch) avec choix du tag et de la version Frappe
-#    - par push d'un tag git (v*)
-# =============================================================================
-
-name: Build & publish image (standalone)
-
+name: Toolkit validation
 on:
+  pull_request:
   push:
-    tags:
-      - 'v*'
-
-  workflow_dispatch:
-    inputs:
-      version:
-        description: "Tag Docker (ex: v1.0.0)"
-        required: true
-      frappe_version:
-        description: "Branche Frappe (ex: version-16)"
-        required: false
-        default: "version-16"
-
+    branches: [main]
+permissions:
+  contents: read
 jobs:
-  build:
+  validate:
     runs-on: ubuntu-latest
-
-    env:
-      IMAGE_NAME: ghcr.io/jeffreyapi/frappe
-      FRAPPE_VERSION: ${{ github.event.inputs.frappe_version || 'version-16' }}
-
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      # ── Déterminer le tag de l'image ──────────────────────────────────────
-      - name: Déterminer le tag
-        id: tag
-        run: |
-          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            echo "version=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
-          else
-            echo "version=${GITHUB_REF_NAME}" >> $GITHUB_OUTPUT
-          fi
-
-      # ── Préparer apps.json avec le PAT ────────────────────────────────────
-      - name: Encoder apps.json
-        id: encode
-        run: |
-          export GH_PAT="${{ secrets.GH_PAT }}"
-          envsubst < apps.json > /tmp/apps.build.json
-          echo "apps_json_base64=$(base64 -w 0 /tmp/apps.build.json)" >> $GITHUB_OUTPUT
-
-      # ── Login GHCR ────────────────────────────────────────────────────────
-      - name: Login GHCR
-        uses: docker/login-action@v3
+      - uses: actions/checkout@v4
         with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GH_PAT }}
-
-      # ── Build multi-plateforme ─────────────────────────────────────────────
-      - name: Setup Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Build & push
-        uses: docker/build-push-action@v5
+          persist-credentials: false
+      - uses: actions/setup-python@v5
         with:
-          context: .
-          file: Dockerfile
-          push: true
-          platforms: linux/amd64,linux/arm64
-          build-args: |
-            FRAPPE_VERSION=${{ env.FRAPPE_VERSION }}
-            APPS_JSON_BASE64=${{ steps.encode.outputs.apps_json_base64 }}
-          tags: |
-            ${{ env.IMAGE_NAME }}:${{ steps.tag.outputs.version }}
-            ${{ env.IMAGE_NAME }}:latest
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-          labels: |
-            org.opencontainers.image.source=https://github.com/Jeffreyapi/frappe_dokploy
-            org.opencontainers.image.revision=${{ github.sha }}
-            org.opencontainers.image.version=${{ steps.tag.outputs.version }}
+          python-version: "3.14"
+      - run: python -m pip install textual
+      - run: python scripts/test_fd.py
+      - run: python -m compileall -q scripts deploy/scripts
+      - run: bash -n scripts/devcontainer-setup.sh && bash -n deploy/scripts/site.sh && bash -n deploy/scripts/init.sh

@@ -1,3 +1,4 @@
+name: ${DEPLOYMENT_ID:?DEPLOYMENT_ID must identify a tenant and environment}
 # =============================================================================
 #  frappe_dokploy — docker-compose.yml
 #  Stack principale : dev ET prod (même fichier, comportement piloté par .env)
@@ -9,7 +10,7 @@
 # =============================================================================
 
 x-frappe-base: &frappe_base
-  image: ${IMAGE_NAME:-ghcr.io/jeffreyapi/frappe}:${APP_VERSION:-latest}
+  image: ${IMAGE_REFERENCE:-${IMAGE_NAME:-ghcr.io/jeffreyapi/frappe}:${APP_VERSION:?APP_VERSION requis}}
   pull_policy: ${PULL_POLICY:-always}
   volumes:
     - sites:/home/frappe/frappe-bench/sites
@@ -49,11 +50,10 @@ services:
     volumes:
       - sites:/home/frappe/frappe-bench/sites
       - assets:/home/frappe/frappe-bench/sites/assets
-      - ./deploy/scripts:/opt/frappe-deploy:ro
-      - ./deploy/config:/opt/frappe-deploy-config:ro
-    entrypoint: ["/opt/frappe-deploy/init.sh"]
+    entrypoint: ["bash", "/opt/frappe-deploy/init.sh"]
     environment:
       SITE_NAME:            ${SITE_NAME:?SITE_NAME requis}
+      DEPLOYMENT_ID:        ${DEPLOYMENT_ID:?DEPLOYMENT_ID requis}
       ADMIN_PASSWORD:       ${ADMIN_PASSWORD:?ADMIN_PASSWORD requis}
       DB_HOST:              ${DB_HOST:-db}
       DB_PORT:              "${DB_PORT:-3306}"
@@ -61,6 +61,9 @@ services:
       ENVIRONMENT:          ${ENVIRONMENT:-dev}
       RESTORE:              ${RESTORE:-0}
       S3_BACKUP_BUCKET:     ${S3_BACKUP_BUCKET:-}
+      S3_BACKUP_ENABLED:    ${S3_BACKUP_ENABLED:-0}
+      S3_BACKUP_REGION:     ${S3_BACKUP_REGION:-us-east-1}
+      BACKUP_ID:            ${BACKUP_ID:-}
       S3_BACKUP_ACCESS_KEY: ${S3_BACKUP_ACCESS_KEY:-}
       S3_BACKUP_SECRET_KEY: ${S3_BACKUP_SECRET_KEY:-}
       S3_ENDPOINT_URL:      ${S3_ENDPOINT_URL:-}
@@ -100,19 +103,21 @@ services:
       BACKEND:                    backend:8000
       FRAPPE_SITE_NAME_HEADER:    ${FRAPPE_SITE_NAME_HEADER:-$$host}
       SOCKETIO:                   websocket:9000
-      UPSTREAM_REAL_IP_ADDRESS:   127.0.0.1
+      UPSTREAM_REAL_IP_ADDRESS:   ${TRUSTED_PROXY_CIDR:-127.0.0.1/32}
       UPSTREAM_REAL_IP_HEADER:    X-Forwarded-For
       UPSTREAM_REAL_IP_RECURSIVE: "off"
       CLIENT_MAX_BODY_SIZE:       ${CLIENT_MAX_BODY_SIZE:-50m}
       PROXY_READ_TIMEOUT:         ${PROXY_READ_TIMEOUT:-120}
     ports:
-      - "${FRONTEND_PORT:-8080}:8080"
+      - "${FRONTEND_BIND_ADDRESS:-127.0.0.1}:${FRONTEND_PORT:-8080}:8080"
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.${APP_NAME}.rule=Host(`${SITE_NAME}`)"
-      - "traefik.http.routers.${APP_NAME}.tls=true"
-      - "traefik.http.routers.${APP_NAME}.tls.certresolver=letsencrypt"
-      - "traefik.http.services.${APP_NAME}.loadbalancer.server.port=8080"
+      - "traefik.http.routers.${DEPLOYMENT_ID}.rule=Host(`${SITE_NAME}`)"
+      - "traefik.http.routers.${DEPLOYMENT_ID}.tls=true"
+      - "traefik.http.routers.${DEPLOYMENT_ID}.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.${DEPLOYMENT_ID}.service=${DEPLOYMENT_ID}"
+      - "traefik.http.services.${DEPLOYMENT_ID}.loadbalancer.server.port=8080"
+      - "traefik.docker.network=dokploy-network"
     networks:
       - bench-network
       - dokploy-network
@@ -184,7 +189,7 @@ services:
 
   # ── Base de données (optionnelle : désactiver si DB externe) ─────────────────
   db:
-    image: mariadb:10.6
+    image: mariadb:11.8
     deploy:
       mode: replicated
       replicas: ${ENABLE_DB:-1}
@@ -194,15 +199,15 @@ services:
       - --character-set-server=utf8mb4
       - --collation-server=utf8mb4_unicode_ci
       - --skip-character-set-client-handshake
-      - --skip-innodb-read-only-compressed
     environment:
-      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD}
+      MARIADB_ROOT_PASSWORD: ${DB_ROOT_PASSWORD}
+      MARIADB_ROOT_HOST: "%"
     volumes:
       - db-data:/var/lib/mysql
     networks:
       - bench-network
     healthcheck:
-      test: mysqladmin ping -h localhost --password=${DB_ROOT_PASSWORD}
+      test: [CMD, healthcheck.sh, --connect, --innodb_initialized]
       interval: 1s
       retries: 20
 

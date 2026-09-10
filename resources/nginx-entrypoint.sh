@@ -1,4 +1,5 @@
 #!/bin/bash
+set -e
 
 # Set variables that do not exist
 if [[ -z "$BACKEND" ]]; then
@@ -49,4 +50,5 @@ envsubst '${BACKEND}
 	${CLIENT_MAX_BODY_SIZE}' \
   </templates/nginx/frappe.conf.template >/etc/nginx/conf.d/frappe.conf
 
-nginx -g 'daemon off;'
+nginx -t
+exec nginx -g 'daemon off;'

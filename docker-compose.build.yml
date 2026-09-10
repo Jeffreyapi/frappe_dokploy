@@ -18,9 +18,12 @@
 x-local-build: &local_build
   context: .
   dockerfile: Dockerfile
+  additional_contexts:
+    app_source: ../.build/source
   args:
-    FRAPPE_VERSION:   ${FRAPPE_VERSION:-version-15}
-    APPS_JSON_BASE64: ${APPS_JSON_BASE64:-}
+    FRAPPE_VERSION: ${FRAPPE_VERSION:-v16.33.1}
+    FRAPPE_REVISION: ${FRAPPE_REVISION:-988e54f3c4c291e2077a83809663f123731abe76}
+    SOURCE_REVISION: ${SOURCE_REVISION:-local}
 
 services:
   site-manager:
