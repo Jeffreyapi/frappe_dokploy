@@ -14,6 +14,14 @@ COPY --chown=frappe:frappe scripts/app_sources.py /opt/frappe-deploy/app_sources
 COPY --from=app_source --chown=frappe:frappe / /opt/app-source/
 WORKDIR /home/frappe/frappe-bench
 RUN python3 /opt/frappe-deploy/app_sources.py --project /opt/app-source --bench . && \
+    for app_dir in apps/*/; do \
+      node_modules="$app_dir/node_modules"; \
+      [ -d "$node_modules" ] || continue; \
+      for pymod_dir in "$app_dir"/*/; do \
+        [ -d "$pymod_dir/public" ] || continue; \
+        [ -e "$pymod_dir/public/node_modules" ] || ln -sfn ../../node_modules "$pymod_dir/public/node_modules"; \
+      done; \
+    done && \
     bench build --hard-link --production && \
     cp /opt/app-source/apps.json /home/frappe/apps-manifest.json && \
     cp /opt/app-source/source.json /home/frappe/source.json && \
