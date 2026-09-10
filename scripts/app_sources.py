@@ -80,7 +80,7 @@ def link_local(project, destination):
     destination.symlink_to(project.resolve(), target_is_directory=True)
 
 
-def install_sources(project, bench, development=False):
+def install_sources(project, bench, development=False, revision=None):
     entries = load_manifest(project / "apps.json")
     if package_name(project) != entries[-1]["name"]:
         raise ValueError("Local package identity differs from apps.json")
@@ -94,6 +94,23 @@ def install_sources(project, bench, development=False):
             link_local(project, destination)
         elif not destination.exists():
             shutil.copytree(project, destination, ignore=shutil.ignore_patterns(".git", "__pycache__"))
+            # Bench instantiates git.Repo on every on-disk app during
+            # `bench setup requirements`, so the copied local app needs a
+            # repository. A single-commit snapshot (no remote) is enough:
+            # the authoritative source identity stays in source.json.
+            snapshot = revision
+            if not snapshot:
+                manifest = project / "source.json"
+                if manifest.exists():
+                    snapshot = json.loads(manifest.read_text(encoding="utf-8")).get("revision")
+            subprocess.run(["git", "init", "-q", str(destination)], check=True)
+            subprocess.run(["git", "-C", str(destination), "add", "-A"], check=True)
+            subprocess.run(
+                ["git", "-C", str(destination), "-c", "user.name=frappe-deploy",
+                 "-c", "user.email=build@frappe-deploy.invalid", "commit", "--no-gpg-sign",
+                 "-q", "-m", f"Local app snapshot for bench (source {snapshot or 'unknown'})"],
+                check=True,
+            )
         else:
             raise ValueError(f"Refusing to overwrite {destination}")
     names = ["frappe", *(app["name"] for app in entries)]
@@ -124,7 +141,11 @@ def main():
     if args.site:
         install_on_site(args.project, args.bench, args.site)
     else:
-        install_sources(args.project, args.bench, args.development)
+        revision = None
+        source_manifest = args.project / "source.json"
+        if source_manifest.exists():
+            revision = json.loads(source_manifest.read_text(encoding="utf-8")).get("revision")
+        install_sources(args.project, args.bench, args.development, revision)
 
 
 if __name__ == "__main__":
