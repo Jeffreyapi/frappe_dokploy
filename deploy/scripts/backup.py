@@ -107,7 +107,7 @@ def create(bench, site, deployment):
     backup_id = datetime.now(UTC).strftime("%Y%m%dT%H%M%S") + "-" + uuid.uuid4().hex
     directory = bench / "sites" / identity(site) / "private" / "backups" / "sets" / backup_id
     directory.mkdir(parents=True, mode=0o700)
-    command("bench", "--site", site, "backup", "--with-files", "--backup-path", str(directory), cwd=bench)
+    command("bench", "--site", site, "backup", "--with-files", "--verbose", "--backup-path", str(directory), cwd=bench)
     make_manifest(directory, site, deployment)
     if os.environ.get("S3_BACKUP_ENABLED", "0").lower() in ("1", "true"):
         upload(directory, site, deployment)
