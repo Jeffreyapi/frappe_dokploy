@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -105,9 +106,18 @@ def upload(directory, site, deployment):
 
 def create(bench, site, deployment):
     backup_id = datetime.now(UTC).strftime("%Y%m%dT%H%M%S") + "-" + uuid.uuid4().hex
+    # Frappe's cleanup scans private/backups and assumes every entry is a file.
+    # Do not create the `sets` directory before bench backup, otherwise its
+    # delete_temp_backups() tries to os.remove() that directory and fails.
     directory = bench / "sites" / identity(site) / "private" / "backups" / "sets" / backup_id
-    directory.mkdir(parents=True, mode=0o700)
-    command("bench", "--site", site, "backup", "--with-files", "--verbose", "--backup-path", str(directory), cwd=bench)
+    temporary = Path(tempfile.mkdtemp(prefix="frappe-backup-"))
+    try:
+        command("bench", "--site", site, "backup", "--with-files", "--verbose", "--backup-path", str(temporary), cwd=bench)
+        directory.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(temporary), str(directory))
+    except Exception:
+        shutil.rmtree(temporary, ignore_errors=True)
+        raise
     make_manifest(directory, site, deployment)
     if os.environ.get("S3_BACKUP_ENABLED", "0").lower() in ("1", "true"):
         upload(directory, site, deployment)
