@@ -27,10 +27,12 @@ RUN python3 /opt/frappe-deploy/app_sources.py --project /opt/app-source --bench 
     cp /opt/app-source/source.json /home/frappe/source.json && \
     cp -a sites/assets /home/frappe/image-assets && \
     find apps -mindepth 1 -type d -name .git -prune -exec rm -rf '{}' + && \
-    # node_modules are build-time only (assets are hard-linked/copied into sites/assets).
-    # Removing them here shrinks the exported image by several GB (raven alone adds
-    # ~1.5GB of nested node_modules) and avoids disk exhaustion during export.
-    find apps -type d -name node_modules -prune -exec rm -rf '{}' +
+    # Keep Frappe's node_modules: the runtime websocket process requires socket.io.
+    # Other apps' node_modules are build-time only (assets are already in sites/assets)
+    # and Raven alone adds ~1.5GB of nested dependencies.
+    for app_dir in apps/*/; do \
+      [ "$(basename "$app_dir")" = frappe ] || find "$app_dir" -type d -name node_modules -prune -exec rm -rf '{}' +; \
+    done
 
 FROM ${BASE_IMAGE} AS runtime
 ARG SOURCE_REVISION=unknown
