@@ -1,10 +1,22 @@
 # syntax=docker/dockerfile:1
-# Named context app_source must be prepared with scripts/prepare_build.py.
+# Named context app_source: populated two ways, either works.
+#   1. --build-context app_source=<dir prepared by scripts/prepare_build.py>
+#      (CI flow, exactly one local app pinned by revision in apps.json).
+#   2. Left unset (defaults to this empty stage) + ARG APPS_JSON_BASE64 set
+#      (platform-triggered builds, e.g. Dokploy's native GitHub build, which
+#      cannot supply a named context, only build args). Every app.json entry
+#      is then typically remote (url+revision) — no local app required.
+# Whichever apps.json lands in /opt/app-source/ first (context copy) wins;
+# APPS_JSON_BASE64 only fills the gap when the context brought nothing.
+FROM scratch AS app_source
+
 ARG BUILD_IMAGE=ghcr.io/frappe/build@sha256:9e876dcf4f7b5b992ed4ab86bc0079c2dc84f5d2df7fe076e43b4cbbd2772163
 ARG BASE_IMAGE=ghcr.io/frappe/base@sha256:86f2b7b9ec64a0b1d91a29e89b81ac708738bdec5e2e02b101c80942bf1bbba5
 FROM ${BUILD_IMAGE} AS builder
 ARG FRAPPE_VERSION=v16.33.1
 ARG FRAPPE_REVISION=988e54f3c4c291e2077a83809663f123731abe76
+ARG SOURCE_REVISION=unknown
+ARG APPS_JSON_BASE64=""
 USER frappe
 WORKDIR /home/frappe
 RUN bench init --frappe-branch=${FRAPPE_VERSION} --no-procfile --no-backups \
@@ -12,6 +24,18 @@ RUN bench init --frappe-branch=${FRAPPE_VERSION} --no-procfile --no-backups \
     test "$(git -C /home/frappe/frappe-bench/apps/frappe rev-parse HEAD)" = "$FRAPPE_REVISION"
 COPY --chown=frappe:frappe scripts/app_sources.py /opt/frappe-deploy/app_sources.py
 COPY --from=app_source --chown=frappe:frappe / /opt/app-source/
+RUN if [ ! -f /opt/app-source/apps.json ]; then \
+      test -n "$APPS_JSON_BASE64" || { \
+        echo "apps.json missing: pass --build-context app_source=<dir> or the APPS_JSON_BASE64 build arg" >&2; \
+        exit 1; \
+      }; \
+      echo "$APPS_JSON_BASE64" | base64 -d > /opt/app-source/apps.json; \
+    fi
+RUN test -f /opt/app-source/source.json || python3 -c "
+import json, os
+apps = json.load(open('/opt/app-source/apps.json'))
+json.dump({'revision': os.environ['SOURCE_REVISION'], 'apps': apps}, open('/opt/app-source/source.json', 'w'))
+"
 WORKDIR /home/frappe/frappe-bench
 RUN python3 /opt/frappe-deploy/app_sources.py --project /opt/app-source --bench . && \
     for app_dir in apps/*/; do \

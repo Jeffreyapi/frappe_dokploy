@@ -38,8 +38,8 @@ def load_manifest(path):
                 raise ValueError("Use a credential-free HTTPS source URL")
             if not re.fullmatch(r"[0-9a-f]{40}", app["revision"]):
                 raise ValueError(f"A full immutable commit SHA is required for {name}")
-    if len(local) != 1 or entries[-1] != local[0]:
-        raise ValueError("Exactly one local app must be the last entry")
+    if len(local) > 1 or (local and entries[-1] != local[0]):
+        raise ValueError("At most one local app is allowed, and it must be the last entry")
     return entries
 
 
@@ -82,7 +82,7 @@ def link_local(project, destination):
 
 def install_sources(project, bench, development=False, revision=None):
     entries = load_manifest(project / "apps.json")
-    if package_name(project) != entries[-1]["name"]:
+    if entries and "path" in entries[-1] and package_name(project) != entries[-1]["name"]:
         raise ValueError("Local package identity differs from apps.json")
     apps_dir = bench / "apps"
     apps_dir.mkdir(exist_ok=True)
