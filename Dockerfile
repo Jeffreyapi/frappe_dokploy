@@ -31,11 +31,7 @@ RUN if [ ! -f /opt/app-source/apps.json ]; then \
       }; \
       echo "$APPS_JSON_BASE64" | base64 -d > /opt/app-source/apps.json; \
     fi
-RUN test -f /opt/app-source/source.json || python3 -c "
-import json, os
-apps = json.load(open('/opt/app-source/apps.json'))
-json.dump({'revision': os.environ['SOURCE_REVISION'], 'apps': apps}, open('/opt/app-source/source.json', 'w'))
-"
+RUN test -f /opt/app-source/source.json || python3 -c "import json, os; apps = json.load(open('/opt/app-source/apps.json')); json.dump({'revision': os.environ['SOURCE_REVISION'], 'apps': apps}, open('/opt/app-source/source.json', 'w'))"
 WORKDIR /home/frappe/frappe-bench
 RUN python3 /opt/frappe-deploy/app_sources.py --project /opt/app-source --bench . && \
     for app_dir in apps/*/; do \
