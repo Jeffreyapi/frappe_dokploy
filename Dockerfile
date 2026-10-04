@@ -8,10 +8,11 @@
 #      is then typically remote (url+revision) — no local app required.
 # Whichever apps.json lands in /opt/app-source/ first (context copy) wins;
 # APPS_JSON_BASE64 only fills the gap when the context brought nothing.
-FROM scratch AS app_source
-
+# NB: ces ARG DOIVENT précéder le premier FROM — en buildkit, un ARG placé
+# après un FROM est scopé à ce stage et reste indéfini pour les FROM suivants.
 ARG BUILD_IMAGE=ghcr.io/frappe/build@sha256:9e876dcf4f7b5b992ed4ab86bc0079c2dc84f5d2df7fe076e43b4cbbd2772163
 ARG BASE_IMAGE=ghcr.io/frappe/base@sha256:86f2b7b9ec64a0b1d91a29e89b81ac708738bdec5e2e02b101c80942bf1bbba5
+FROM scratch AS app_source
 FROM ${BUILD_IMAGE} AS builder
 ARG FRAPPE_VERSION=v16.33.1
 ARG FRAPPE_REVISION=988e54f3c4c291e2077a83809663f123731abe76
