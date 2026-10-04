@@ -1,4 +1,4 @@
-# syntax=docker/dockerfile:1
+# syntax=docker/dockerfile:1.7
 # Named context app_source: populated two ways, either works.
 #   1. --build-context app_source=<dir prepared by scripts/prepare_build.py>
 #      (CI flow, exactly one local app pinned by revision in apps.json).
