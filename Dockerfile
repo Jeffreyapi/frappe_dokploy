@@ -1,4 +1,4 @@
-# syntax=docker/dockerfile:1.7
+# syntax=docker/dockerfile:1.10
 # Named context app_source: populated two ways, either works.
 #   1. --build-context app_source=<dir prepared by scripts/prepare_build.py>
 #      (CI flow, exactly one local app pinned by revision in apps.json).
@@ -34,7 +34,13 @@ RUN if [ ! -f /opt/app-source/apps.json ]; then \
     fi
 RUN test -f /opt/app-source/source.json || python3 -c "import json, os; apps = json.load(open('/opt/app-source/apps.json')); json.dump({'revision': os.environ['SOURCE_REVISION'], 'apps': apps}, open('/opt/app-source/source.json', 'w'))"
 WORKDIR /home/frappe/frappe-bench
-RUN python3 /opt/frappe-deploy/app_sources.py --project /opt/app-source --bench . && \
+# GITHUB_TOKEN est un secret BuildKit (id=git_token) : disponible uniquement
+# pour ce RUN via l'env (syntaxe >= 1.10), donc ni dans les build args/etageres
+# d'image, ni dans apps.json (les URLs sources restent sans credential) —
+# app_sources.py en dérive un helper askpass éphémère pour les apps privées ;
+# absent (builds à contexte local / apps publiques), le fetch reste anonyme.
+RUN --mount=type=secret,id=git_token,env=GITHUB_TOKEN \
+    python3 /opt/frappe-deploy/app_sources.py --project /opt/app-source --bench . && \
     for app_dir in apps/*/; do \
       node_modules="$app_dir/node_modules"; \
       [ -d "$node_modules" ] || continue; \
