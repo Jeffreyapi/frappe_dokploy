@@ -16,15 +16,23 @@ FROM scratch AS app_source
 FROM ${BUILD_IMAGE} AS builder
 ARG FRAPPE_VERSION=v16.33.1
 ARG FRAPPE_REVISION=988e54f3c4c291e2077a83809663f123731abe76
-ARG SOURCE_REVISION=unknown
-ARG APPS_JSON_BASE64=""
 USER frappe
 WORKDIR /home/frappe
+# Réseau instable du hôte source : yarn abandonne au 1er timeout de socket
+# (30 s hard-coded) ; ESOCKETTIMEDOUT a tué 2 builds consécutifs (05/10, #7).
+# Plafond à 10 min par requête, posé avant tout RUN qui lance yarn.
+RUN yarn config set network-timeout 600000 -g
 RUN bench init --frappe-branch=${FRAPPE_VERSION} --no-procfile --no-backups \
       --skip-redis-config-generation --skip-assets /home/frappe/frappe-bench && \
     test "$(git -C /home/frappe/frappe-bench/apps/frappe rev-parse HEAD)" = "$FRAPPE_REVISION"
 COPY --chown=frappe:frappe scripts/app_sources.py /opt/frappe-deploy/app_sources.py
 COPY --from=app_source --chown=frappe:frappe / /opt/app-source/
+# Ces deux ARG changent à chaque build (empreinte des commits, apps.json) :
+# BuildKit les injecte dans l'env de tous les RUN qui suivent leur déclaration
+# et les inclut dans la clé de cache. Les déclarer ici garde `bench init`
+# (clone + deps de Frappe) en cache tant que FRAPPE_VERSION/REVISION ne bougent pas.
+ARG SOURCE_REVISION=unknown
+ARG APPS_JSON_BASE64=""
 RUN if [ ! -f /opt/app-source/apps.json ]; then \
       test -n "$APPS_JSON_BASE64" || { \
         echo "apps.json missing: pass --build-context app_source=<dir> or the APPS_JSON_BASE64 build arg" >&2; \
@@ -34,16 +42,19 @@ RUN if [ ! -f /opt/app-source/apps.json ]; then \
     fi
 RUN test -f /opt/app-source/source.json || python3 -c "import json, os; apps = json.load(open('/opt/app-source/apps.json')); json.dump({'revision': os.environ['SOURCE_REVISION'], 'apps': apps}, open('/opt/app-source/source.json', 'w'))"
 WORKDIR /home/frappe/frappe-bench
-# Réseau instable du hôte source : yarn abandonne au 1er timeout de socket
-# (30 s hard-coded) ; ESOCKETTIMEDOUT a tué 2 builds consécutifs (05/10, #7).
-# Plafond à 10 min par requête avant le RUN qui déclenche yarn install.
-RUN yarn config set network-timeout 600000 -g
 # GITHUB_TOKEN est un secret BuildKit (id=git_token) : disponible uniquement
 # pour ce RUN via l'env (syntaxe >= 1.10), donc ni dans les build args/etageres
 # d'image, ni dans apps.json (les URLs sources restent sans credential) —
 # app_sources.py en dérive un helper askpass éphémère pour les apps privées ;
 # absent (builds à contexte local / apps publiques), le fetch reste anonyme.
+# Caches yarn/uv persistants entre builds (daemon de build) : un nouveau commit
+# d'app invalide cette couche mais ne re-télécharge plus les paquets inchangés
+# (~250 s de « Fetching packages » sur un build à froid). Hors image finale.
+# uid/gid 1000 = utilisateur frappe des images ghcr.io/frappe/*.
 RUN --mount=type=secret,id=git_token,env=GITHUB_TOKEN \
+    --mount=type=cache,target=/home/frappe/.cache/yarn,uid=1000,gid=1000 \
+    --mount=type=cache,target=/home/frappe/.cache/uv,uid=1000,gid=1000 \
+    YARN_CACHE_FOLDER=/home/frappe/.cache/yarn UV_CACHE_DIR=/home/frappe/.cache/uv UV_LINK_MODE=copy \
     python3 /opt/frappe-deploy/app_sources.py --project /opt/app-source --bench . && \
     for app_dir in apps/*/; do \
       node_modules="$app_dir/node_modules"; \
@@ -60,7 +71,6 @@ RUN --mount=type=secret,id=git_token,env=GITHUB_TOKEN \
     find apps -mindepth 1 -type d -name .git -prune -exec rm -rf '{}' +
 
 FROM ${BASE_IMAGE} AS runtime
-ARG SOURCE_REVISION=unknown
 ARG S5CMD_VERSION=2.2.0
 USER root
 RUN apt-get update && apt-get install -y --no-install-recommends util-linux && rm -rf /var/lib/apt/lists/*
@@ -81,5 +91,6 @@ RUN chmod 755 /opt/frappe-deploy/*.sh /usr/local/bin/nginx-entrypoint.sh
 ENV PATH="/home/frappe/frappe-bench/env/bin:${PATH}"
 USER frappe
 WORKDIR /home/frappe/frappe-bench
+ARG SOURCE_REVISION=unknown
 LABEL org.opencontainers.image.revision=$SOURCE_REVISION
 CMD ["gunicorn", "--chdir=/home/frappe/frappe-bench/sites", "--bind=0.0.0.0:8000", "--threads=4", "--workers=2", "--worker-class=gthread", "--worker-tmp-dir=/dev/shm", "--timeout=120", "--preload", "frappe.app:application"]
