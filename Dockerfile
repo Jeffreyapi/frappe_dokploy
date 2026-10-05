@@ -34,6 +34,10 @@ RUN if [ ! -f /opt/app-source/apps.json ]; then \
     fi
 RUN test -f /opt/app-source/source.json || python3 -c "import json, os; apps = json.load(open('/opt/app-source/apps.json')); json.dump({'revision': os.environ['SOURCE_REVISION'], 'apps': apps}, open('/opt/app-source/source.json', 'w'))"
 WORKDIR /home/frappe/frappe-bench
+# Réseau instable du hôte source : yarn abandonne au 1er timeout de socket
+# (30 s hard-coded) ; ESOCKETTIMEDOUT a tué 2 builds consécutifs (05/10, #7).
+# Plafond à 10 min par requête avant le RUN qui déclenche yarn install.
+RUN yarn config set network-timeout 600000 -g
 RUN python3 /opt/frappe-deploy/app_sources.py --project /opt/app-source --bench . && \
     for app_dir in apps/*/; do \
       node_modules="$app_dir/node_modules"; \
