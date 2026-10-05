@@ -1,15 +1,57 @@
 """Install explicitly named, immutable sources, without inferring identity from URLs."""
 
 import argparse
+import base64
 import json
+import os
 import re
 import shutil
+import stat
 import subprocess
 import tempfile
-import tomllib
 import uuid
 from pathlib import Path
 from urllib.parse import urlparse
+
+import tomllib
+
+ASKPASS_TEMPLATE = """#!/bin/sh
+case "$1" in
+  Username*) echo "x-access-token" ;;
+  Password*) echo "$GIT_CREDENTIAL_RESPONSE" ;;
+esac
+"""
+
+
+def credential_prompt_env() -> dict[str, str]:
+    """Extra git environment for an authenticated fetch, or {} for anonymous.
+
+    The token comes from GITHUB_TOKEN, present only inside the RUN decorated
+    with --mount=type=secret in the Dockerfile (never in build args, never in
+    apps.json, never in the image layers; anonymous fetch when unset/empty).
+    It is passed to git out-of-band via a short-lived askpass helper (mode
+    0700, unlinked right after the fetch) answering with an HTTP Basic auth
+    header — ``Basic b64(\"x-access-token:<token>\")`` for a raw token, or a
+    pre-encoded \"Basic ...\" value left as is.
+    """
+    token = os.environ.get("GITHUB_TOKEN", "").strip()
+    if not token:
+        return {}
+    response = (
+        token
+        if token.startswith("Basic ")
+        else "Basic "
+        + base64.b64encode(("x-access-token:" + token).encode("utf-8")).decode("ascii")
+    )
+    fd, helper = tempfile.mkstemp(prefix=".git-askpass-")
+    os.write(fd, ASKPASS_TEMPLATE.encode("ascii"))
+    os.close(fd)
+    os.chmod(helper, stat.S_IRWXU)
+    return {
+        "GIT_ASKPASS": helper,
+        "GIT_TERMINAL_PROMPT": "0",
+        "GIT_CREDENTIAL_RESPONSE": response,
+    }
 
 
 def run(*args, cwd=None):
@@ -59,7 +101,18 @@ def checkout_remote(app, destination):
         staged = Path(temporary) / app["name"]
         subprocess.run(["git", "init", str(staged)], check=True)
         subprocess.run(["git", "remote", "add", "origin", app["url"]], cwd=staged, check=True)
-        subprocess.run(["git", "fetch", "--depth=1", "origin", app["revision"]], cwd=staged, check=True)
+        extra_env = credential_prompt_env()
+        try:
+            subprocess.run(
+                ["git", "fetch", "--depth=1", "origin", app["revision"]],
+                cwd=staged,
+                check=True,
+                env={**os.environ, **extra_env},
+            )
+        finally:
+            helper = extra_env.get("GIT_ASKPASS")
+            if helper:
+                os.unlink(helper)  # vécu ~une commande ; le token n'y reste pas
         subprocess.run(["git", "checkout", "--detach", "FETCH_HEAD"], cwd=staged, check=True)
         if run("git", "rev-parse", "HEAD", cwd=staged) != app["revision"]:
             raise ValueError("Fetched revision differs from the manifest")

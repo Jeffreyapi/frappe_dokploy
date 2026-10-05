@@ -1,4 +1,4 @@
-# syntax=docker/dockerfile:1.7
+# syntax=docker/dockerfile:1.10
 # Named context app_source: populated two ways, either works.
 #   1. --build-context app_source=<dir prepared by scripts/prepare_build.py>
 #      (CI flow, exactly one local app pinned by revision in apps.json).
@@ -38,7 +38,13 @@ WORKDIR /home/frappe/frappe-bench
 # (30 s hard-coded) ; ESOCKETTIMEDOUT a tué 2 builds consécutifs (05/10, #7).
 # Plafond à 10 min par requête avant le RUN qui déclenche yarn install.
 RUN yarn config set network-timeout 600000 -g
-RUN python3 /opt/frappe-deploy/app_sources.py --project /opt/app-source --bench . && \
+# GITHUB_TOKEN est un secret BuildKit (id=git_token) : disponible uniquement
+# pour ce RUN via l'env (syntaxe >= 1.10), donc ni dans les build args/etageres
+# d'image, ni dans apps.json (les URLs sources restent sans credential) —
+# app_sources.py en dérive un helper askpass éphémère pour les apps privées ;
+# absent (builds à contexte local / apps publiques), le fetch reste anonyme.
+RUN --mount=type=secret,id=git_token,env=GITHUB_TOKEN \
+    python3 /opt/frappe-deploy/app_sources.py --project /opt/app-source --bench . && \
     for app_dir in apps/*/; do \
       node_modules="$app_dir/node_modules"; \
       [ -d "$node_modules" ] || continue; \
