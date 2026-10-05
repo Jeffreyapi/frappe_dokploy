@@ -64,5 +64,11 @@ def main():
     print("Manifest checks passed")
 
 
+# Point d'entrée pytest (optionnel) : le fichier reste un runner autonome,
+# mais `python -m pytest scripts/test_app_sources.py` collecte ce test.
+def test_manifest_checks():
+    main()
+
+
 if __name__ == "__main__":
     main()
