@@ -10,7 +10,9 @@ name: ${DEPLOYMENT_ID:?DEPLOYMENT_ID must identify a tenant and environment}
 # =============================================================================
 
 x-frappe-base: &frappe_base
-  image: ${IMAGE_REFERENCE:-${IMAGE_NAME:-ghcr.io/jeffreyapi/frappe}:${APP_VERSION:?APP_VERSION requis}}
+  # IMAGE_REGISTRY (ex. registry.example.com) préfixe l'image quand elle vit dans un
+  # registry privé : Quai n'écrit que IMAGE_REFERENCE=<repo>:<tag>.
+  image: ${IMAGE_REGISTRY:+${IMAGE_REGISTRY}/}${IMAGE_REFERENCE:-${IMAGE_NAME:-ghcr.io/jeffreyapi/frappe}:${APP_VERSION:?APP_VERSION requis}}
   pull_policy: ${PULL_POLICY:-always}
   volumes:
     - sites:/home/frappe/frappe-bench/sites
@@ -85,6 +87,19 @@ services:
     depends_on:
       site-manager:
         condition: service_completed_successfully
+    # Lu par `backup.py` quand un Schedule Job Dokploy l'exécute dans ce conteneur.
+    environment:
+      SITE_NAME:            ${SITE_NAME:?SITE_NAME requis}
+      DEPLOYMENT_ID:        ${DEPLOYMENT_ID:?DEPLOYMENT_ID requis}
+      DB_HOST:              ${DB_HOST:-db}
+      DB_PORT:              "${DB_PORT:-3306}"
+      DB_ROOT_PASSWORD:     ${DB_ROOT_PASSWORD:?DB_ROOT_PASSWORD requis}
+      S3_BACKUP_BUCKET:     ${S3_BACKUP_BUCKET:-}
+      S3_BACKUP_ENABLED:    ${S3_BACKUP_ENABLED:-0}
+      S3_BACKUP_REGION:     ${S3_BACKUP_REGION:-us-east-1}
+      S3_BACKUP_ACCESS_KEY: ${S3_BACKUP_ACCESS_KEY:-}
+      S3_BACKUP_SECRET_KEY: ${S3_BACKUP_SECRET_KEY:-}
+      S3_ENDPOINT_URL:      ${S3_ENDPOINT_URL:-}
     healthcheck:
       test: ["CMD", "wait-for-it", "0.0.0.0:8000"]
       interval: 2s
@@ -108,19 +123,8 @@ services:
       UPSTREAM_REAL_IP_RECURSIVE: "off"
       CLIENT_MAX_BODY_SIZE:       ${CLIENT_MAX_BODY_SIZE:-50m}
       PROXY_READ_TIMEOUT:         ${PROXY_READ_TIMEOUT:-120}
-    ports:
-      - "${FRONTEND_BIND_ADDRESS:-127.0.0.1}:${FRONTEND_PORT:-8080}:8080"
-    labels:
-      - "traefik.enable=true"
-      - "traefik.http.routers.${DEPLOYMENT_ID}.rule=Host(`${SITE_NAME}`)"
-      - "traefik.http.routers.${DEPLOYMENT_ID}.tls=true"
-      - "traefik.http.routers.${DEPLOYMENT_ID}.tls.certresolver=letsencrypt"
-      - "traefik.http.routers.${DEPLOYMENT_ID}.service=${DEPLOYMENT_ID}"
-      - "traefik.http.services.${DEPLOYMENT_ID}.loadbalancer.server.port=8080"
-      - "traefik.docker.network=dokploy-network"
     networks:
       - bench-network
-      - dokploy-network
     healthcheck:
       test: ["CMD", "wait-for-it", "0.0.0.0:8080"]
       interval: 2s
@@ -237,14 +241,18 @@ volumes:
 
 networks:
   bench-network:
-  dokploy-network:
-    external: true
 
+# Exposition (ports hôte, labels Traefik, réseau dokploy-network) : voir
+# docker-compose.traefik.yml. Sous Dokploy, ne PAS l'utiliser — le Domain Dokploy
+# injecte lui-même routeur et réseau.
+#
 # ─────────────────────────────────────────────────────────────────────────────
 # Variables clés                Description                        Défaut
 # ─────────────────────────────────────────────────────────────────────────────
 # APP_NAME                     Nom de l'app Frappe                (requis, pour labels Traefik)
 # IMAGE_NAME                   Image Docker à utiliser            ghcr.io/jeffreyapi/frappe
+# IMAGE_REGISTRY               Host du registry privé (préfixe)   (vide)
+# IMAGE_REFERENCE              repo:tag complet (prioritaire)     (vide)
 # APP_VERSION                  Tag de l'image                     latest
 # SITE_NAME                    Nom du site Frappe                 (requis)
 # ADMIN_PASSWORD               Mot de passe admin Frappe          (requis)
