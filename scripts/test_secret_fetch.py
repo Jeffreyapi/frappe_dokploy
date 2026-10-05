@@ -24,7 +24,8 @@ ENTRY = {
 }
 # Format d'un PAT GitHub : la valeur du secret n'est JAMAIS un contenu libre.
 TOKEN = "ghp_0123456789abcdef0123456789abcdef01234567"
-EXPECTED_HEADER = "Basic " + base64.b64encode(("x-access-token:" + TOKEN).encode("utf-8")).decode("ascii")
+# L'askpass répond le jeton brut : git compose lui-même le header d'autorisation.
+EXPECTED_RESPONSE = TOKEN
 
 # Fake git : sur fetch, invoque GIT_ASKPASS comme git le ferait pour un prompt
 # « Password for ... » et journalise la réponse ; rev-parse renvoie le SHA attendu.
@@ -78,12 +79,13 @@ def main() -> None:
         os.environ["PATH"] = str(fake_bin) + os.pathsep + os.environ["PATH"]
 
         # 1. Secret présent (token brut) : le fetch demande le mot de passe au
-        #    helper et reçoit le header Basic x-access-token — pas de prompt tty.
+        #    helper et reçoit le JETON BRUT (pas un header pré-composé) —
+        #    git construit lui-même Authorization: Basic b64(user:token).
         probe = checkout(TOKEN, root, "apps-token")
         match = PROBE_LINE.search(probe)
         assert match, f"no fetch probe line: {probe!r}"
         assert match.group(1) == "0", "askpass invocation failed"
-        assert match.group(2) == EXPECTED_HEADER, probe
+        assert match.group(2) == EXPECTED_RESPONSE, probe
         assert match.group(3) == "0", "GIT_TERMINAL_PROMPT must be disabled for the fetch"
 
         # 2. Secret absent : fetch anonyme strictement identique à l'ancien.
@@ -96,13 +98,14 @@ def main() -> None:
         # 3. Secret vide : traité comme absent (pas de helper monté pour rien).
         assert PROBE_LINE.search(checkout("", root, "apps-empty")).group(2) == "none"
 
-        # 4. Déjà encodé « Basic <b64> » : transmis tel quel.
+        # 4. Secret déjà encodé « Basic <b64> » : décodé défensivement, la
+        #    réponse askpass est le jeton contenu après les deux-points.
         probe = checkout(
             "Basic " + base64.b64encode(b"user:password").decode("ascii"),
             root,
             "apps-basic",
         )
-        assert "answer=Basic dXNlcjpwYXNzd29yZA==" in probe, probe
+        assert "answer=password" in probe, probe
 
         # 5. Câblage du Dockerfile : le montage secret ne vise QUE le RUN qui
         #    fetch les apps (syntaxe >= 1.10 pour l'option env=).

@@ -30,19 +30,25 @@ def credential_prompt_env() -> dict[str, str]:
     with --mount=type=secret in the Dockerfile (never in build args, never in
     apps.json, never in the image layers; anonymous fetch when unset/empty).
     It is passed to git out-of-band via a short-lived askpass helper (mode
-    0700, unlinked right after the fetch) answering with an HTTP Basic auth
-    header — ``Basic b64(\"x-access-token:<token>\")`` for a raw token, or a
-    pre-encoded \"Basic ...\" value left as is.
+    0700, unlinked right after the fetch) answering with the raw token: git
+    itself composes the HTTP authorization header. A pre-encoded \"Basic ...\"
+    value found in the secret is decoded defensively (b64 payload after the
+    prefix, keeping the part after the colon); on decode failure or empty
+    result the fetch stays anonymous.
     """
     token = os.environ.get("GITHUB_TOKEN", "").strip()
     if not token:
         return {}
-    response = (
-        token
-        if token.startswith("Basic ")
-        else "Basic "
-        + base64.b64encode(("x-access-token:" + token).encode("utf-8")).decode("ascii")
-    )
+    if token.startswith("Basic "):
+        try:
+            decoded = base64.b64decode(token[len("Basic "):]).decode("utf-8")
+        except (ValueError, UnicodeDecodeError):
+            return {}
+        response = decoded.split(":", 1)[1] if ":" in decoded else decoded
+        if not response:
+            return {}
+    else:
+        response = token
     fd, helper = tempfile.mkstemp(prefix=".git-askpass-")
     os.write(fd, ASKPASS_TEMPLATE.encode("ascii"))
     os.close(fd)
