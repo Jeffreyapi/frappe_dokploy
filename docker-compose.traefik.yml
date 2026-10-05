@@ -1,0 +1,31 @@
+# =============================================================================
+#  docker-compose.traefik.yml — exposition directe via Traefik (hors Dokploy Domain)
+#
+#  Usage :
+#    docker compose -f docker-compose.yml -f docker-compose.traefik.yml up -d
+#
+#  Le fichier principal n'expose rien. Ce override publie le frontend sur l'hôte
+#  et déclare le routeur Traefik à la main. Sous Dokploy, utiliser le Domain du
+#  Compose à la place (Dokploy injecte labels et réseau au déploiement) : combiner
+#  les deux crée deux routeurs pour le même host.
+# =============================================================================
+
+services:
+  frontend:
+    ports:
+      - "${FRONTEND_BIND_ADDRESS:-127.0.0.1}:${FRONTEND_PORT:-8080}:8080"
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.${DEPLOYMENT_ID}.rule=Host(`${SITE_NAME}`)"
+      - "traefik.http.routers.${DEPLOYMENT_ID}.tls=true"
+      - "traefik.http.routers.${DEPLOYMENT_ID}.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.${DEPLOYMENT_ID}.service=${DEPLOYMENT_ID}"
+      - "traefik.http.services.${DEPLOYMENT_ID}.loadbalancer.server.port=8080"
+      - "traefik.docker.network=dokploy-network"
+    networks:
+      - bench-network
+      - dokploy-network
+
+networks:
+  dokploy-network:
+    external: true

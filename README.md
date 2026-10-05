@@ -72,6 +72,13 @@ docker compose --env-file .env -f frappe_deploy/docker-compose.yml run --rm site
 docker compose --env-file .env -f frappe_deploy/docker-compose.yml run --rm -e BACKUP_ID=<id> site-manager restore
 ```
 
+`docker-compose.yml` publishes nothing. For direct Traefik routing outside
+Dokploy, add `-f frappe_deploy/docker-compose.traefik.yml` (host port, Traefik
+labels, external `dokploy-network`). Under Dokploy use the Compose Domain
+instead; do not combine both. Set `IMAGE_REGISTRY` to prefix `IMAGE_REFERENCE`
+with a private registry host. The `backend` service carries the backup/S3
+variables so a scheduled `backup.py create` can run inside it.
+
 The hosting environment owns the external `dokploy-network`. Scripts are
 baked into the image. Assets are built once, not during migrations.
 Errors preserve maintenance. A site lock serializes lifecycle operations.
