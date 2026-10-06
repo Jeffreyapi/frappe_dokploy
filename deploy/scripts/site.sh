@@ -16,6 +16,8 @@ configure_common() {
   bench set-config -g redis_queue "redis://${REDIS_QUEUE:-redis-queue:6379}"
   bench set-config -g redis_socketio "redis://${REDIS_QUEUE:-redis-queue:6379}"
   bench set-config -gp socketio_port "${SOCKETIO_PORT:-9000}"
+  bench set-config -g chromium_path "/usr/bin/chromium-headless-shell"
+  bench set-config -g chromium_start_timeout "${CHROMIUM_START_TIMEOUT:-10}"
 }
 require_site_exists() {
   [[ -f "sites/$SITE_NAME/site_config.json" ]] || die "Incomplete or missing site: $SITE_NAME"
