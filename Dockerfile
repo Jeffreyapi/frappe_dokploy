@@ -13,6 +13,25 @@
 ARG BUILD_IMAGE=ghcr.io/frappe/build@sha256:9e876dcf4f7b5b992ed4ab86bc0079c2dc84f5d2df7fe076e43b4cbbd2772163
 ARG BASE_IMAGE=ghcr.io/frappe/base@sha256:86f2b7b9ec64a0b1d91a29e89b81ac708738bdec5e2e02b101c80942bf1bbba5
 FROM scratch AS app_source
+
+# Stage « manifest » : décode apps.json et le découpe en un fichier par app
+# (slot-N.json). Il est refait à chaque build (APPS_JSON_BASE64 change), mais
+# il est minuscule ; seul le CONTENU de chaque slot compte pour la suite : un
+# COPY dont le fichier est identique garde sa couche en cache.
+FROM ${BUILD_IMAGE} AS manifest
+ARG APPS_JSON_BASE64=""
+USER frappe
+COPY --chown=frappe:frappe scripts/app_sources.py /opt/frappe-deploy/app_sources.py
+COPY --from=app_source --chown=frappe:frappe / /opt/app-source/
+RUN if [ ! -f /opt/app-source/apps.json ]; then \
+      test -n "$APPS_JSON_BASE64" || { \
+        echo "apps.json missing: pass --build-context app_source=<dir> or the APPS_JSON_BASE64 build arg" >&2; \
+        exit 1; \
+      }; \
+      echo "$APPS_JSON_BASE64" | base64 -d > /opt/app-source/apps.json; \
+    fi && \
+    python3 /opt/frappe-deploy/app_sources.py --project /opt/app-source --split-to /opt/app-source/slots
+
 FROM ${BUILD_IMAGE} AS builder
 ARG FRAPPE_VERSION=v16.33.1
 ARG FRAPPE_REVISION=988e54f3c4c291e2077a83809663f123731abe76
@@ -25,46 +44,64 @@ RUN yarn config set network-timeout 600000 -g
 RUN bench init --frappe-branch=${FRAPPE_VERSION} --no-procfile --no-backups \
       --skip-redis-config-generation --skip-assets /home/frappe/frappe-bench && \
     test "$(git -C /home/frappe/frappe-bench/apps/frappe rev-parse HEAD)" = "$FRAPPE_REVISION"
+# Caches yarn/uv persistants entre builds (daemon de build) : une couche
+# invalidée ne re-télécharge plus les paquets inchangés. Hors image finale.
+# uid/gid 1000 = utilisateur frappe des images ghcr.io/frappe/*.
+ENV YARN_CACHE_FOLDER=/home/frappe/.cache/yarn UV_CACHE_DIR=/home/frappe/.cache/uv UV_LINK_MODE=copy
 COPY --chown=frappe:frappe scripts/app_sources.py /opt/frappe-deploy/app_sources.py
-COPY --from=app_source --chown=frappe:frappe / /opt/app-source/
-# Ces deux ARG changent à chaque build (empreinte des commits, apps.json) :
-# BuildKit les injecte dans l'env de tous les RUN qui suivent leur déclaration
-# et les inclut dans la clé de cache. Les déclarer ici garde `bench init`
-# (clone + deps de Frappe) en cache tant que FRAPPE_VERSION/REVISION ne bougent pas.
-ARG SOURCE_REVISION=unknown
-ARG APPS_JSON_BASE64=""
-RUN if [ ! -f /opt/app-source/apps.json ]; then \
-      test -n "$APPS_JSON_BASE64" || { \
-        echo "apps.json missing: pass --build-context app_source=<dir> or the APPS_JSON_BASE64 build arg" >&2; \
-        exit 1; \
-      }; \
-      echo "$APPS_JSON_BASE64" | base64 -d > /opt/app-source/apps.json; \
-    fi
-RUN test -f /opt/app-source/source.json || python3 -c "import json, os; apps = json.load(open('/opt/app-source/apps.json')); json.dump({'revision': os.environ['SOURCE_REVISION'], 'apps': apps}, open('/opt/app-source/source.json', 'w'))"
+RUN --mount=type=cache,target=/home/frappe/.cache/yarn,uid=1000,gid=1000 \
+    --mount=type=cache,target=/home/frappe/.cache/uv,uid=1000,gid=1000 \
+    python3 /opt/frappe-deploy/app_sources.py --bench /home/frappe/frappe-bench --base
 WORKDIR /home/frappe/frappe-bench
+# Une couche par app, dans l'ordre des dépendances d'apps.json : modifier une
+# app ne refait que sa couche et celles qui la suivent (`bench build --app`).
 # GITHUB_TOKEN est un secret BuildKit (id=git_token) : disponible uniquement
-# pour ce RUN via l'env (syntaxe >= 1.10), donc ni dans les build args/etageres
+# pour ces RUN via l'env (syntaxe >= 1.10), donc ni dans les build args/etageres
 # d'image, ni dans apps.json (les URLs sources restent sans credential) —
 # app_sources.py en dérive un helper askpass éphémère pour les apps privées ;
 # absent (builds à contexte local / apps publiques), le fetch reste anonyme.
-# Caches yarn/uv persistants entre builds (daemon de build) : un nouveau commit
-# d'app invalide cette couche mais ne re-télécharge plus les paquets inchangés
-# (~250 s de « Fetching packages » sur un build à froid). Hors image finale.
-# uid/gid 1000 = utilisateur frappe des images ghcr.io/frappe/*.
+# Au-delà de 6 apps distantes, la dernière couche reçoit toutes les restantes.
+COPY --from=manifest /opt/app-source/slots/slot-1.json /opt/slots/slot-1.json
 RUN --mount=type=secret,id=git_token,env=GITHUB_TOKEN \
     --mount=type=cache,target=/home/frappe/.cache/yarn,uid=1000,gid=1000 \
     --mount=type=cache,target=/home/frappe/.cache/uv,uid=1000,gid=1000 \
-    YARN_CACHE_FOLDER=/home/frappe/.cache/yarn UV_CACHE_DIR=/home/frappe/.cache/uv UV_LINK_MODE=copy \
-    python3 /opt/frappe-deploy/app_sources.py --project /opt/app-source --bench . && \
-    for app_dir in apps/*/; do \
-      node_modules="$app_dir/node_modules"; \
-      [ -d "$node_modules" ] || continue; \
-      for pymod_dir in "$app_dir"/*/; do \
-        [ -d "$pymod_dir/public" ] || continue; \
-        [ -e "$pymod_dir/public/node_modules" ] || ln -sfn ../../node_modules "$pymod_dir/public/node_modules"; \
-      done; \
-    done && \
-    bench build --hard-link --production && \
+    python3 /opt/frappe-deploy/app_sources.py --bench . --slot /opt/slots/slot-1.json
+COPY --from=manifest /opt/app-source/slots/slot-2.json /opt/slots/slot-2.json
+RUN --mount=type=secret,id=git_token,env=GITHUB_TOKEN \
+    --mount=type=cache,target=/home/frappe/.cache/yarn,uid=1000,gid=1000 \
+    --mount=type=cache,target=/home/frappe/.cache/uv,uid=1000,gid=1000 \
+    python3 /opt/frappe-deploy/app_sources.py --bench . --slot /opt/slots/slot-2.json
+COPY --from=manifest /opt/app-source/slots/slot-3.json /opt/slots/slot-3.json
+RUN --mount=type=secret,id=git_token,env=GITHUB_TOKEN \
+    --mount=type=cache,target=/home/frappe/.cache/yarn,uid=1000,gid=1000 \
+    --mount=type=cache,target=/home/frappe/.cache/uv,uid=1000,gid=1000 \
+    python3 /opt/frappe-deploy/app_sources.py --bench . --slot /opt/slots/slot-3.json
+COPY --from=manifest /opt/app-source/slots/slot-4.json /opt/slots/slot-4.json
+RUN --mount=type=secret,id=git_token,env=GITHUB_TOKEN \
+    --mount=type=cache,target=/home/frappe/.cache/yarn,uid=1000,gid=1000 \
+    --mount=type=cache,target=/home/frappe/.cache/uv,uid=1000,gid=1000 \
+    python3 /opt/frappe-deploy/app_sources.py --bench . --slot /opt/slots/slot-4.json
+COPY --from=manifest /opt/app-source/slots/slot-5.json /opt/slots/slot-5.json
+RUN --mount=type=secret,id=git_token,env=GITHUB_TOKEN \
+    --mount=type=cache,target=/home/frappe/.cache/yarn,uid=1000,gid=1000 \
+    --mount=type=cache,target=/home/frappe/.cache/uv,uid=1000,gid=1000 \
+    python3 /opt/frappe-deploy/app_sources.py --bench . --slot /opt/slots/slot-5.json
+COPY --from=manifest /opt/app-source/slots/slot-6.json /opt/slots/slot-6.json
+RUN --mount=type=secret,id=git_token,env=GITHUB_TOKEN \
+    --mount=type=cache,target=/home/frappe/.cache/yarn,uid=1000,gid=1000 \
+    --mount=type=cache,target=/home/frappe/.cache/uv,uid=1000,gid=1000 \
+    python3 /opt/frappe-deploy/app_sources.py --bench . --slot /opt/slots/slot-6.json
+# Change à chaque build (empreinte des commits) : déclaré en dernier pour ne pas
+# invalider les couches d'apps ci-dessus.
+ARG SOURCE_REVISION=unknown
+COPY --from=manifest --chown=frappe:frappe /opt/app-source /opt/app-source
+RUN test -f /opt/app-source/source.json || python3 -c "import json, os; apps = json.load(open('/opt/app-source/apps.json')); json.dump({'revision': os.environ['SOURCE_REVISION'], 'apps': apps}, open('/opt/app-source/source.json', 'w'))"
+# App locale éventuelle (flux CI avec --build-context app_source=<dir>) : toujours
+# la dernière entrée d'apps.json, installée après les apps distantes.
+RUN --mount=type=cache,target=/home/frappe/.cache/yarn,uid=1000,gid=1000 \
+    --mount=type=cache,target=/home/frappe/.cache/uv,uid=1000,gid=1000 \
+    python3 /opt/frappe-deploy/app_sources.py --project /opt/app-source --bench . --local && \
+    python3 /opt/frappe-deploy/app_sources.py --bench . --copy-assets && \
     cp /opt/app-source/apps.json /home/frappe/apps-manifest.json && \
     cp /opt/app-source/source.json /home/frappe/source.json && \
     cp -a sites/assets /home/frappe/image-assets && \

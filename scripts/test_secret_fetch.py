@@ -107,25 +107,24 @@ def main() -> None:
         )
         assert "answer=password" in probe, probe
 
-        # 5. Câblage du Dockerfile : le montage secret ne vise QUE le RUN qui
-        #    fetch les apps (syntaxe >= 1.10 pour l'option env=).
+        # 5. Câblage du Dockerfile : le montage secret ne vise QUE les RUN qui
+        #    fetch les apps (un par slot ; syntaxe >= 1.10 pour l'option env=).
         dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
         directive = re.fullmatch(r"# syntax=docker/dockerfile:1\.(\d+)", dockerfile.splitlines()[0])
         assert directive and int(directive.group(1)) >= 10, "env= requires Dockerfile syntax 1.10"
         lines = dockerfile.splitlines()
-        anchor = next(
-            i for i, line in enumerate(lines)
-            if "app_sources.py --project /opt/app-source --bench ." in line
-        )
-        start = anchor
-        while not lines[start].startswith("RUN "):
-            start -= 1
-        end = start
-        while lines[end].endswith("\\"):
-            end += 1
-        statement = "\n".join(lines[start : end + 1])
-        assert "RUN --mount=type=secret,id=git_token,env=GITHUB_TOKEN" in statement, statement
-        assert dockerfile.count("--mount=type=secret") == 1, "the secret mount must be unique"
+        fetchers = [i for i, line in enumerate(lines) if "app_sources.py --bench . --slot " in line]
+        assert fetchers, "no app-fetching RUN found in the Dockerfile"
+        for anchor in fetchers:
+            start = anchor
+            while not lines[start].startswith("RUN "):
+                start -= 1
+            end = start
+            while lines[end].endswith("\\"):
+                end += 1
+            statement = "\n".join(lines[start : end + 1])
+            assert "RUN --mount=type=secret,id=git_token,env=GITHUB_TOKEN" in statement, statement
+        assert dockerfile.count("--mount=type=secret") == len(fetchers), "the secret mount must only target fetching RUNs"
         assert "ghp_" not in dockerfile, "no literal token in the Dockerfile"
 
     print("Git secret checks passed")

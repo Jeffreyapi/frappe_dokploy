@@ -30,6 +30,17 @@ The application owns its CI gate and release promotion. The platform's
 `.github/workflows/ci.yml` builds/tests once and publishes that exact image.
 It does not call a floating toolkit workflow.
 
+### Layer cache per app
+
+The builder stage installs and builds one app per Docker layer (`bench build
+--app <name>`), in `apps.json` order, after a layer for Frappe itself. A stage
+splits `apps.json` into `slot-1.json` … `slot-6.json` and each layer `COPY`s only
+its own slot, so BuildKit keeps the layers of apps that did not change — and
+of those before the first changed one. Changing the last app rebuilds only that
+app. With more than 6 remote apps, the last slot takes all the remaining ones.
+Pin Frappe and the apps by commit: a moving ref defeats the cache. The yarn and
+uv download caches are BuildKit cache mounts, kept on the build host.
+
 ### Build arg (a platform that can only pass build args)
 
 When the build is triggered directly by a platform with no concept of named

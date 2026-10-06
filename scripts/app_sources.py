@@ -64,6 +64,17 @@ def run(*args, cwd=None):
     return subprocess.check_output(args, cwd=cwd, text=True).strip()
 
 
+def validate_remote(app):
+    name = app.get("name", "")
+    if set(app) != {"name", "url", "revision"}:
+        raise ValueError(f"Invalid remote app fields: {name}")
+    url = urlparse(app["url"])
+    if url.scheme != "https" or not url.hostname or url.username or url.password or url.query or url.fragment:
+        raise ValueError("Use a credential-free HTTPS source URL")
+    if not re.fullmatch(r"[0-9a-f]{40}", app["revision"]):
+        raise ValueError(f"A full immutable commit SHA is required for {name}")
+
+
 def load_manifest(path):
     entries = json.loads(Path(path).read_text(encoding="utf-8"))
     if not isinstance(entries, list) or not entries:
@@ -79,13 +90,7 @@ def load_manifest(path):
                 raise ValueError("The local app must reference the project root")
             local.append(app)
         else:
-            if set(app) != {"name", "url", "revision"}:
-                raise ValueError(f"Invalid remote app fields: {name}")
-            url = urlparse(app["url"])
-            if url.scheme != "https" or not url.hostname or url.username or url.password or url.query or url.fragment:
-                raise ValueError("Use a credential-free HTTPS source URL")
-            if not re.fullmatch(r"[0-9a-f]{40}", app["revision"]):
-                raise ValueError(f"A full immutable commit SHA is required for {name}")
+            validate_remote(app)
     if len(local) > 1 or (local and entries[-1] != local[0]):
         raise ValueError("At most one local app is allowed, and it must be the last entry")
     return entries
@@ -139,6 +144,35 @@ def link_local(project, destination):
     destination.symlink_to(project.resolve(), target_is_directory=True)
 
 
+def install_entry(project, bench, app, development=False, revision=None):
+    destination = bench / "apps" / app["name"]
+    if "url" in app:
+        checkout_remote(app, destination)
+    elif development:
+        link_local(project, destination)
+    elif not destination.exists():
+        shutil.copytree(project, destination, ignore=shutil.ignore_patterns(".git", "__pycache__"))
+        # Bench instantiates git.Repo on every on-disk app during
+        # `bench setup requirements`, so the copied local app needs a
+        # repository. A single-commit snapshot (no remote) is enough:
+        # the authoritative source identity stays in source.json.
+        snapshot = revision
+        if not snapshot:
+            manifest = project / "source.json"
+            if manifest.exists():
+                snapshot = json.loads(manifest.read_text(encoding="utf-8")).get("revision")
+        subprocess.run(["git", "init", "-q", str(destination)], check=True)
+        subprocess.run(["git", "-C", str(destination), "add", "-A"], check=True)
+        subprocess.run(
+            ["git", "-C", str(destination), "-c", "user.name=frappe-deploy",
+             "-c", "user.email=build@frappe-deploy.invalid", "commit", "--no-gpg-sign",
+             "-q", "-m", f"Local app snapshot for bench (source {snapshot or 'unknown'})"],
+            check=True,
+        )
+    else:
+        raise ValueError(f"Refusing to overwrite {destination}")
+
+
 def install_sources(project, bench, development=False, revision=None):
     entries = load_manifest(project / "apps.json")
     if entries and "path" in entries[-1] and package_name(project) != entries[-1]["name"]:
@@ -146,37 +180,112 @@ def install_sources(project, bench, development=False, revision=None):
     apps_dir = bench / "apps"
     apps_dir.mkdir(exist_ok=True)
     for app in entries:
-        destination = apps_dir / app["name"]
-        if "url" in app:
-            checkout_remote(app, destination)
-        elif development:
-            link_local(project, destination)
-        elif not destination.exists():
-            shutil.copytree(project, destination, ignore=shutil.ignore_patterns(".git", "__pycache__"))
-            # Bench instantiates git.Repo on every on-disk app during
-            # `bench setup requirements`, so the copied local app needs a
-            # repository. A single-commit snapshot (no remote) is enough:
-            # the authoritative source identity stays in source.json.
-            snapshot = revision
-            if not snapshot:
-                manifest = project / "source.json"
-                if manifest.exists():
-                    snapshot = json.loads(manifest.read_text(encoding="utf-8")).get("revision")
-            subprocess.run(["git", "init", "-q", str(destination)], check=True)
-            subprocess.run(["git", "-C", str(destination), "add", "-A"], check=True)
-            subprocess.run(
-                ["git", "-C", str(destination), "-c", "user.name=frappe-deploy",
-                 "-c", "user.email=build@frappe-deploy.invalid", "commit", "--no-gpg-sign",
-                 "-q", "-m", f"Local app snapshot for bench (source {snapshot or 'unknown'})"],
-                check=True,
-            )
-        else:
-            raise ValueError(f"Refusing to overwrite {destination}")
+        install_entry(project, bench, app, development, revision)
     names = ["frappe", *(app["name"] for app in entries)]
     for path in (apps_dir / "apps.txt", bench / "sites" / "apps.txt"):
         path.write_text("\n".join(names) + "\n", encoding="utf-8")
     subprocess.run(["bench", "setup", "requirements"], cwd=bench, check=True)
     return names
+
+
+# --- Build incrémental (une couche Docker par app) -------------------------
+# Le Dockerfile n'a pas de boucle : le nombre de couches est fixe. `split`
+# répartit donc les apps distantes sur SLOTS fichiers, un par couche ; la
+# dernière couche reçoit toutes les apps restantes. BuildKit compare le
+# contenu de chaque fichier (COPY) : une app inchangée garde sa couche en
+# cache tant que celles qui la précèdent n'ont pas changé non plus.
+SLOTS = 6
+
+
+def split_slots(entries, slots=SLOTS):
+    remote = [app for app in entries if "url" in app]
+    groups = [[app] for app in remote[: slots - 1]]
+    if remote[slots - 1 :]:
+        groups.append(remote[slots - 1 :])
+    return groups + [[] for _ in range(slots - len(groups))]
+
+
+def write_slots(project, out, slots=SLOTS):
+    groups = split_slots(load_manifest(project / "apps.json"), slots)
+    out.mkdir(parents=True, exist_ok=True)
+    for index, group in enumerate(groups, 1):
+        # sort_keys : le contenu (donc la clé de cache) ne dépend pas de l'ordre des clés.
+        (out / f"slot-{index}.json").write_text(json.dumps(group, sort_keys=True), encoding="utf-8")
+
+
+def register_apps(bench, names):
+    for path in (bench / "apps" / "apps.txt", bench / "sites" / "apps.txt"):
+        current = path.read_text(encoding="utf-8").split() if path.exists() else []
+        current += [name for name in names if name not in current]
+        path.write_text("\n".join(current) + "\n", encoding="utf-8")
+
+
+def link_public_node_modules(bench, name):
+    """Les bundles vite/esbuild d'une app résolvent `public/node_modules` : on le
+    relie au node_modules de l'app (équivalent de l'ancienne boucle shell)."""
+    app_dir = bench / "apps" / name
+    if not (app_dir / "node_modules").is_dir():
+        return
+    for module_dir in sorted(p for p in app_dir.iterdir() if (p / "public").is_dir()):
+        link = module_dir / "public" / "node_modules"
+        if link.exists():
+            continue
+        if link.is_symlink():
+            link.unlink()
+        link.symlink_to("../../node_modules")
+
+
+def build_app(bench, name):
+    # `--app` : esbuild, commande de build et traductions de cette app seulement ;
+    # assets.json est fusionné avec le résultat des builds précédents.
+    # Pas de `--hard-link` ici : chaque `bench build --hard-link` supprime puis
+    # recopie sites/assets/<app> depuis <app>/public, ce qui effacerait le dist/
+    # des apps déjà construites. En liens symboliques, dist/ est écrit dans
+    # apps/<app>/<app>/public et survit aux builds suivants ; la copie réelle
+    # est faite une seule fois à la fin (copy_assets).
+    link_public_node_modules(bench, name)
+    subprocess.run(["bench", "build", "--app", name, "--production"], cwd=bench, check=True)
+
+
+def copy_assets(bench):
+    """Remplace les liens sites/assets/<app> par des copies : l'image doit
+    embarquer ses assets (image-assets est copié hors du bench, les liens
+    seraient cassés). Équivalent de l'ancien `bench build --hard-link`."""
+    # setup() initialise les globales (assets_path) dont make_asset_dirs dépend.
+    code = (
+        "import frappe; from frappe.build import make_asset_dirs, setup; "
+        "frappe.init(''); setup(); make_asset_dirs(hard_link=True)"
+    )
+    subprocess.run([str(bench / "env" / "bin" / "python"), "-c", code], cwd=bench / "sites", check=True)
+
+
+def build_base(bench):
+    subprocess.run(["bench", "setup", "requirements", "frappe"], cwd=bench, check=True)
+    build_app(bench, "frappe")
+
+
+def add_apps(project, bench, entries, development=False, revision=None):
+    for app in entries:
+        install_entry(project, bench, app, development, revision)
+        register_apps(bench, [app["name"]])
+        subprocess.run(["bench", "setup", "requirements", app["name"]], cwd=bench, check=True)
+        build_app(bench, app["name"])
+
+
+def add_slot(bench, slot):
+    entries = json.loads(Path(slot).read_text(encoding="utf-8"))
+    for app in entries:
+        validate_remote(app)
+    add_apps(None, bench, entries)
+
+
+def add_local(project, bench, revision=None):
+    entries = load_manifest(project / "apps.json")
+    if "path" not in entries[-1]:
+        return
+    if package_name(project) != entries[-1]["name"]:
+        raise ValueError("Local package identity differs from apps.json")
+    add_apps(project, bench, entries[-1:], revision=revision)
 
 
 def install_on_site(project, bench, site):
@@ -190,21 +299,39 @@ def install_on_site(project, bench, site):
         raise ValueError("Site installation incomplete")
 
 
+def source_revision(project):
+    manifest = project / "source.json"
+    if manifest.exists():
+        return json.loads(manifest.read_text(encoding="utf-8")).get("revision")
+    return None
+
+
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--project", type=Path, required=True)
-    parser.add_argument("--bench", type=Path, required=True)
+    parser.add_argument("--project", type=Path)
+    parser.add_argument("--bench", type=Path)
     parser.add_argument("--development", action="store_true")
     parser.add_argument("--site")
+    parser.add_argument("--split-to", type=Path, help="write one slot-N.json per app under this directory")
+    parser.add_argument("--base", action="store_true", help="install and build frappe alone")
+    parser.add_argument("--slot", type=Path, help="install and build the apps listed in this slot file")
+    parser.add_argument("--local", action="store_true", help="install and build the local app, if any")
+    parser.add_argument("--copy-assets", action="store_true", help="turn sites/assets links into real copies")
     args = parser.parse_args()
-    if args.site:
+    if args.split_to:
+        write_slots(args.project, args.split_to)
+    elif args.base:
+        build_base(args.bench)
+    elif args.slot:
+        add_slot(args.bench, args.slot)
+    elif args.copy_assets:
+        copy_assets(args.bench)
+    elif args.local:
+        add_local(args.project, args.bench, source_revision(args.project))
+    elif args.site:
         install_on_site(args.project, args.bench, args.site)
     else:
-        revision = None
-        source_manifest = args.project / "source.json"
-        if source_manifest.exists():
-            revision = json.loads(source_manifest.read_text(encoding="utf-8")).get("revision")
-        install_sources(args.project, args.bench, args.development, revision)
+        install_sources(args.project, args.bench, args.development, source_revision(args.project))
 
 
 if __name__ == "__main__":
