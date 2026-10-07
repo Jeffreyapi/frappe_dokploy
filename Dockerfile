@@ -26,11 +26,15 @@ RUN yarn config set network-timeout 600000 -g
 # FRAPPE_REVISION épinglé → le test rev-parse échouait (vécu 06/10 : pin 16.36.1, branche
 # passée à 16.50.0). On recale le checkout sur le pin exact avant le test : si le SHA
 # n'est pas dans le clone (shallow), un fetch ciblé le ramène.
+# ⚠ PAS de « origin » comme remote : bench init clône avec --origin upstream
+# (vécu 07/10, build 9e21e4fa : « fatal: 'origin' does not appear to be a git
+# repository » exit 128). Le fetch passe par l'URL explicite — un remote de nom
+# arbitraire rend le RUN indestructible.
 RUN bench init --frappe-branch=${FRAPPE_VERSION} --no-procfile --no-backups \
       --skip-redis-config-generation --skip-assets /home/frappe/frappe-bench && \
     cd /home/frappe/frappe-bench/apps/frappe && \
     (git cat-file -e "${FRAPPE_REVISION}^{commit}" 2>/dev/null || \
-     git fetch --depth=1 origin "${FRAPPE_REVISION}") && \
+     git fetch --depth=1 https://github.com/frappe/frappe.git "${FRAPPE_REVISION}") && \
     git checkout "${FRAPPE_REVISION}" && \
     test "$(git rev-parse HEAD)" = "$FRAPPE_REVISION"
 COPY --chown=frappe:frappe scripts/app_sources.py /opt/frappe-deploy/app_sources.py
