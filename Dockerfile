@@ -22,9 +22,17 @@ WORKDIR /home/frappe
 # (30 s hard-coded) ; ESOCKETTIMEDOUT a tué 2 builds consécutifs (05/10, #7).
 # Plafond à 10 min par requête, posé avant tout RUN qui lance yarn.
 RUN yarn config set network-timeout 600000 -g
+# bench init clone la TÊTE de branche ; si la branche avance (release upstream), HEAD ≠
+# FRAPPE_REVISION épinglé → le test rev-parse échouait (vécu 06/10 : pin 16.36.1, branche
+# passée à 16.50.0). On recale le checkout sur le pin exact avant le test : si le SHA
+# n'est pas dans le clone (shallow), un fetch ciblé le ramène.
 RUN bench init --frappe-branch=${FRAPPE_VERSION} --no-procfile --no-backups \
       --skip-redis-config-generation --skip-assets /home/frappe/frappe-bench && \
-    test "$(git -C /home/frappe/frappe-bench/apps/frappe rev-parse HEAD)" = "$FRAPPE_REVISION"
+    cd /home/frappe/frappe-bench/apps/frappe && \
+    (git cat-file -e "${FRAPPE_REVISION}^{commit}" 2>/dev/null || \
+     git fetch --depth=1 origin "${FRAPPE_REVISION}") && \
+    git checkout "${FRAPPE_REVISION}" && \
+    test "$(git rev-parse HEAD)" = "$FRAPPE_REVISION"
 COPY --chown=frappe:frappe scripts/app_sources.py /opt/frappe-deploy/app_sources.py
 COPY --from=app_source --chown=frappe:frappe / /opt/app-source/
 # Ces deux ARG changent à chaque build (empreinte des commits, apps.json) :
