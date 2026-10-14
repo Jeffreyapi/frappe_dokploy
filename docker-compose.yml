@@ -12,7 +12,7 @@ name: ${DEPLOYMENT_ID:?DEPLOYMENT_ID must identify a tenant and environment}
 x-frappe-base: &frappe_base
   # IMAGE_REGISTRY (ex. registry.example.com) préfixe l'image quand elle vit dans un
   # registry privé : Quai n'écrit que IMAGE_REFERENCE=<repo>:<tag>.
-  image: ${IMAGE_REGISTRY:+${IMAGE_REGISTRY}/}${IMAGE_REFERENCE:-${IMAGE_NAME:-ghcr.io/jeffreyapi/frappe}:${APP_VERSION:?APP_VERSION requis}}
+  image: ${IMAGE_REGISTRY:+${IMAGE_REGISTRY}/}${IMAGE_REFERENCE:-${IMAGE_NAME:-ghcr.io/jeffreyapi/frappe}:${APP_VERSION:-latest}}
   pull_policy: ${PULL_POLICY:-always}
   volumes:
     - sites:/home/frappe/frappe-bench/sites
