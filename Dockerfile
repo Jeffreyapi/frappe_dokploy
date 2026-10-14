@@ -105,4 +105,4 @@ USER frappe
 WORKDIR /home/frappe/frappe-bench
 ARG SOURCE_REVISION=unknown
 LABEL org.opencontainers.image.revision=$SOURCE_REVISION
-CMD ["gunicorn", "--chdir=/home/frappe/frappe-bench/sites", "--bind=0.0.0.0:8000", "--threads=4", "--workers=2", "--worker-class=gthread", "--worker-tmp-dir=/dev/shm", "--timeout=120", "--preload", "frappe.app:application"]
+CMD ["/opt/frappe-deploy/gunicorn.sh"]

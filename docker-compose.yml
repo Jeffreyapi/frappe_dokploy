@@ -17,6 +17,8 @@ x-frappe-base: &frappe_base
   volumes:
     - sites:/home/frappe/frappe-bench/sites
     - assets:/home/frappe/frappe-bench/sites/assets
+  environment: &frappe_environment
+    CONFIG_REVISION: ${CONFIG_REVISION:-}
   networks:
     - bench-network
 
@@ -54,6 +56,7 @@ services:
       - assets:/home/frappe/frappe-bench/sites/assets
     entrypoint: ["bash", "/opt/frappe-deploy/init.sh"]
     environment:
+      <<: *frappe_environment
       SITE_NAME:            ${SITE_NAME:?SITE_NAME requis}
       DEPLOYMENT_ID:        ${DEPLOYMENT_ID:?DEPLOYMENT_ID requis}
       ADMIN_PASSWORD:       ${ADMIN_PASSWORD:?ADMIN_PASSWORD requis}
@@ -78,6 +81,11 @@ services:
       REDIS_QUEUE:          ${REDIS_QUEUE:-redis-queue:6379}
       SOCKETIO_PORT:        ${SOCKETIO_PORT:-9000}
       NEUTRALIZE_MODE:      ${NEUTRALIZE_MODE:-rm}
+      FRAPPE_COMMON_CONFIG: ${FRAPPE_COMMON_CONFIG:-}
+      FRAPPE_SITE_CONFIG:   ${FRAPPE_SITE_CONFIG:-}
+      FRAPPE_ALLOW_CORS_WILDCARD: ${FRAPPE_ALLOW_CORS_WILDCARD:-0}
+      CHROMIUM_PATH:        ${CHROMIUM_PATH:-/usr/bin/chromium-headless-shell}
+      CHROMIUM_START_TIMEOUT: ${CHROMIUM_START_TIMEOUT:-10}
     networks:
       - bench-network
 
@@ -89,6 +97,11 @@ services:
         condition: service_completed_successfully
     # Lu par `backup.py` quand un Schedule Job Dokploy l'exécute dans ce conteneur.
     environment:
+      <<: *frappe_environment
+      GUNICORN_WORKERS: ${GUNICORN_WORKERS:-2}
+      GUNICORN_THREADS: ${GUNICORN_THREADS:-4}
+      GUNICORN_TIMEOUT: ${GUNICORN_TIMEOUT:-120}
+      GUNICORN_MAX_REQUESTS: ${GUNICORN_MAX_REQUESTS:-0}
       SITE_NAME:            ${SITE_NAME:?SITE_NAME requis}
       DEPLOYMENT_ID:        ${DEPLOYMENT_ID:?DEPLOYMENT_ID requis}
       DB_HOST:              ${DB_HOST:-db}
@@ -115,12 +128,13 @@ services:
       websocket:
         condition: service_started
     environment:
-      BACKEND:                    backend:8000
+      <<: *frappe_environment
+      BACKEND:                    ${BACKEND:-backend:8000}
       FRAPPE_SITE_NAME_HEADER:    ${FRAPPE_SITE_NAME_HEADER:-$$host}
-      SOCKETIO:                   websocket:9000
+      SOCKETIO:                   ${SOCKETIO:-websocket:9000}
       UPSTREAM_REAL_IP_ADDRESS:   ${TRUSTED_PROXY_CIDR:-127.0.0.1/32}
-      UPSTREAM_REAL_IP_HEADER:    X-Forwarded-For
-      UPSTREAM_REAL_IP_RECURSIVE: "off"
+      UPSTREAM_REAL_IP_HEADER:    ${UPSTREAM_REAL_IP_HEADER:-X-Forwarded-For}
+      UPSTREAM_REAL_IP_RECURSIVE: ${UPSTREAM_REAL_IP_RECURSIVE:-off}
       CLIENT_MAX_BODY_SIZE:       ${CLIENT_MAX_BODY_SIZE:-50m}
       PROXY_READ_TIMEOUT:         ${PROXY_READ_TIMEOUT:-120}
     networks:
@@ -145,6 +159,11 @@ services:
 
   queue-default:
     <<: *frappe_service
+    deploy:
+      mode: replicated
+      replicas: ${QUEUE_DEFAULT_REPLICAS:-1}
+      restart_policy:
+        condition: always
     command: ["bench", "worker", "--queue", "default"]
     depends_on:
       site-manager:
@@ -157,6 +176,11 @@ services:
 
   queue-long:
     <<: *frappe_service
+    deploy:
+      mode: replicated
+      replicas: ${QUEUE_LONG_REPLICAS:-1}
+      restart_policy:
+        condition: always
     command: ["bench", "worker", "--queue", "long"]
     depends_on:
       site-manager:
@@ -169,6 +193,11 @@ services:
 
   queue-short:
     <<: *frappe_service
+    deploy:
+      mode: replicated
+      replicas: ${QUEUE_SHORT_REPLICAS:-1}
+      restart_policy:
+        condition: always
     command: ["bench", "worker", "--queue", "short"]
     depends_on:
       site-manager:

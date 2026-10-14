@@ -14,10 +14,10 @@ configure_common() {
   bench set-config -gp db_port "${DB_PORT:-3306}"
   bench set-config -g redis_cache "redis://${REDIS_CACHE:-redis-cache:6379}"
   bench set-config -g redis_queue "redis://${REDIS_QUEUE:-redis-queue:6379}"
-  bench set-config -g redis_socketio "redis://${REDIS_QUEUE:-redis-queue:6379}"
   bench set-config -gp socketio_port "${SOCKETIO_PORT:-9000}"
-  bench set-config -g chromium_path "/usr/bin/chromium-headless-shell"
-  bench set-config -g chromium_start_timeout "${CHROMIUM_START_TIMEOUT:-10}"
+  bench set-config -g chromium_path "${CHROMIUM_PATH:-/usr/bin/chromium-headless-shell}"
+  bench set-config -gp chromium_start_timeout "${CHROMIUM_START_TIMEOUT:-10}"
+  python3 "$SCRIPT_DIR/apply_config.py" --bench "$PWD" --scope common
 }
 require_site_exists() {
   [[ -f "sites/$SITE_NAME/site_config.json" ]] || die "Incomplete or missing site: $SITE_NAME"
@@ -47,6 +47,7 @@ migration_failed() {
   exit "$status"
 }
 install_apps() {
+  python3 "$SCRIPT_DIR/apply_config.py" --bench "$PWD" --scope site --site "$SITE_NAME"
   local apps installed app
   apps="${APPS:-}"
   if [[ -z "$apps" ]]; then
@@ -67,6 +68,7 @@ install_apps() {
 migrate_site() {
   # Assets are built and checked in CI, never rebuilt on a production host.
   [[ -z "${SKIP_FIXTURES:-}" ]] || die "Runtime fixture mutation is unsupported; fix fixtures in source"
+  python3 "$SCRIPT_DIR/apply_config.py" --bench "$PWD" --scope site --site "$SITE_NAME"
   bench --site "$SITE_NAME" migrate
   cp -a /opt/image-assets/. sites/assets/
   bench --site "$SITE_NAME" clear-cache
