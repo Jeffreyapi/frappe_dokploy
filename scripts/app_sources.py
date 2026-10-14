@@ -9,11 +9,10 @@ import shutil
 import stat
 import subprocess
 import tempfile
+import tomllib
 import uuid
 from pathlib import Path
 from urllib.parse import urlparse
-
-import tomllib
 
 ASKPASS_TEMPLATE = """#!/bin/sh
 case "$1" in
@@ -139,14 +138,22 @@ def link_local(project, destination):
     destination.symlink_to(project.resolve(), target_is_directory=True)
 
 
-def install_sources(project, bench, development=False, revision=None):
+def install_sources(project, bench, development=False, revision=None, only=None):
     entries = load_manifest(project / "apps.json")
+    if only is not None:
+        selected = [app for app in entries if app["name"] == only]
+        if len(selected) != 1 or len(entries) != 1:
+            raise ValueError("--only requires exactly one manifest app")
+        entries = selected
     if entries and "path" in entries[-1] and package_name(project) != entries[-1]["name"]:
         raise ValueError("Local package identity differs from apps.json")
     apps_dir = bench / "apps"
     apps_dir.mkdir(exist_ok=True)
+    installed_now = []
     for app in entries:
         destination = apps_dir / app["name"]
+        if only is not None and destination.exists():
+            raise ValueError(f"Layer app already exists in parent: {app['name']}")
         if "url" in app:
             checkout_remote(app, destination)
         elif development:
@@ -172,10 +179,24 @@ def install_sources(project, bench, development=False, revision=None):
             )
         else:
             raise ValueError(f"Refusing to overwrite {destination}")
-    names = ["frappe", *(app["name"] for app in entries)]
+        installed_now.append(destination)
+    if only is not None:
+        previous = bench / "sites" / "apps.txt"
+        names = previous.read_text(encoding="utf-8").splitlines() if previous.exists() else ["frappe"]
+        names = list(dict.fromkeys([*names, *(app["name"] for app in entries)]))
+    else:
+        names = ["frappe", *(app["name"] for app in entries)]
     for path in (apps_dir / "apps.txt", bench / "sites" / "apps.txt"):
         path.write_text("\n".join(names) + "\n", encoding="utf-8")
-    subprocess.run(["bench", "setup", "requirements"], cwd=bench, check=True)
+    if only is None:
+        subprocess.run(["bench", "setup", "requirements"], cwd=bench, check=True)
+    else:
+        # Never let bench setup requirements reinstall Frappe or parent apps.
+        for destination in installed_now:
+            subprocess.run(["uv", "pip", "install", "--python", str(bench.resolve() / "env/bin/python"),
+                            "--editable", str(destination.resolve())], cwd=bench, check=True)
+            if (destination / "package.json").exists():
+                subprocess.run(["yarn", "install", "--frozen-lockfile"], cwd=destination, check=True)
     return names
 
 
@@ -196,15 +217,18 @@ def main():
     parser.add_argument("--bench", type=Path, required=True)
     parser.add_argument("--development", action="store_true")
     parser.add_argument("--site")
+    parser.add_argument("--only", help="Install one new app without touching parent dependencies")
     args = parser.parse_args()
     if args.site:
+        if args.only:
+            parser.error("--only cannot be combined with --site")
         install_on_site(args.project, args.bench, args.site)
     else:
         revision = None
         source_manifest = args.project / "source.json"
         if source_manifest.exists():
             revision = json.loads(source_manifest.read_text(encoding="utf-8")).get("revision")
-        install_sources(args.project, args.bench, args.development, revision)
+        install_sources(args.project, args.bench, args.development, revision, args.only)
 
 
 if __name__ == "__main__":
