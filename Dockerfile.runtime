@@ -1,0 +1,27 @@
+# syntax=docker/dockerfile:1.10
+# Static runtime base; generated assembly only adds per-app COPY instructions.
+ARG BASE_IMAGE=ghcr.io/frappe/base@sha256:86f2b7b9ec64a0b1d91a29e89b81ac708738bdec5e2e02b101c80942bf1bbba5
+FROM scratch AS runtime-files
+COPY deploy/scripts/ /opt/frappe-deploy/
+COPY deploy/config/ /opt/frappe-deploy-config/
+COPY resources/nginx-entrypoint.sh /usr/local/bin/nginx-entrypoint.sh
+COPY resources/nginx-template.conf /templates/nginx/frappe.conf.template
+FROM ${BASE_IMAGE} AS runtime
+ARG S5CMD_VERSION=2.2.0
+USER root
+COPY --from=runtime-files / /
+RUN --mount=type=secret,id=proxy_ca,mode=0444 set -eu; \
+    if [ -f /run/secrets/proxy_ca ]; then export CURL_CA_BUNDLE=/run/secrets/proxy_ca; fi; \
+    apt-get update && apt-get install -y --no-install-recommends util-linux; \
+    rm -rf /var/lib/apt/lists/*; \
+    case "$(uname -m)" in x86_64) arch=64bit;; aarch64) arch=arm64;; *) exit 1;; esac; \
+    curl -fsSL "https://github.com/peak/s5cmd/releases/download/v${S5CMD_VERSION}/s5cmd_${S5CMD_VERSION}_Linux-${arch}.tar.gz" -o /tmp/s5cmd.tar.gz; \
+    tar -xzf /tmp/s5cmd.tar.gz -C /usr/local/bin s5cmd; \
+    rm /tmp/s5cmd.tar.gz; s5cmd version; \
+    chmod 755 /opt/frappe-deploy/*.sh /usr/local/bin/nginx-entrypoint.sh && \
+    mkdir -p /home/frappe/frappe-bench/sites /opt/image-assets && \
+    chown -R frappe:frappe /home/frappe/frappe-bench /opt/image-assets
+ENV PATH="/home/frappe/frappe-bench/env/bin:${PATH}"
+USER frappe
+WORKDIR /home/frappe/frappe-bench
+CMD ["/opt/frappe-deploy/gunicorn.sh"]

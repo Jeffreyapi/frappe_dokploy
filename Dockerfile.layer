@@ -1,0 +1,53 @@
+# syntax=docker/dockerfile:1.10
+# Parent is a build image for Frappe, or the immutable previous layer digest.
+ARG BUILD_IMAGE=ghcr.io/frappe/build@sha256:9e876dcf4f7b5b992ed4ab86bc0079c2dc84f5d2df7fe076e43b4cbbd2772163
+ARG PARENT_IMAGE=${BUILD_IMAGE}
+FROM ${PARENT_IMAGE} AS layer
+USER root
+RUN mkdir -p /opt/runtime-slice /opt/app-source /opt/frappe-deploy && \
+    chown -R frappe:frappe /opt/runtime-slice /opt/app-source /opt/frappe-deploy
+COPY --chown=frappe:frappe scripts/app_sources.py scripts/prune_node_modules.py scripts/finalize_layer.py /opt/frappe-deploy/
+USER frappe
+WORKDIR /home/frappe
+ARG FRAPPE_VERSION=v16.33.1
+ARG FRAPPE_REVISION=988e54f3c4c291e2077a83809663f123731abe76
+ARG LAYER_APP=frappe
+ARG APPS_JSON_BASE64=""
+ARG SOURCE_REVISION=unknown
+# Prepare a local pinned repository BEFORE bench init: requirements are installed
+# once, from the exact revision, rather than branch HEAD followed by a reinstall.
+RUN --mount=type=secret,id=git_token,env=GITHUB_TOKEN --mount=type=secret,id=proxy_ca,mode=0444 \
+    set -eu; \
+    if [ -f /run/secrets/proxy_ca ]; then \
+      export GIT_SSL_CAINFO=/run/secrets/proxy_ca SSL_CERT_FILE=/run/secrets/proxy_ca \
+        PIP_CERT=/run/secrets/proxy_ca REQUESTS_CA_BUNDLE=/run/secrets/proxy_ca NODE_EXTRA_CA_CERTS=/run/secrets/proxy_ca; \
+    fi; \
+    yarn config set network-timeout 600000 -g; \
+    if [ "$LAYER_APP" = frappe ]; then \
+      test ! -d /home/frappe/frappe-bench; \
+      git init /tmp/frappe-pinned; \
+      git -C /tmp/frappe-pinned fetch --depth=1 https://github.com/frappe/frappe.git "$FRAPPE_REVISION"; \
+      git -C /tmp/frappe-pinned checkout -b "$FRAPPE_VERSION" FETCH_HEAD; \
+      test "$(git -C /tmp/frappe-pinned rev-parse HEAD)" = "$FRAPPE_REVISION"; \
+      bench init --frappe-path=/tmp/frappe-pinned --frappe-branch="$FRAPPE_VERSION" \
+        --no-procfile --no-backups --skip-redis-config-generation --skip-assets /home/frappe/frappe-bench; \
+      test "$(git -C /home/frappe/frappe-bench/apps/frappe rev-parse HEAD)" = "$FRAPPE_REVISION"; \
+      rm -rf /tmp/frappe-pinned; \
+      printf '[]\n' > /opt/app-source/apps.json; \
+    else \
+      test -d /home/frappe/frappe-bench/apps/frappe; \
+      test -n "$APPS_JSON_BASE64"; \
+      printf '%s' "$APPS_JSON_BASE64" | base64 -d > /opt/app-source/apps.json; \
+      python3 /opt/frappe-deploy/app_sources.py --project /opt/app-source \
+        --bench /home/frappe/frappe-bench --only "$LAYER_APP"; \
+    fi
+WORKDIR /home/frappe/frappe-bench
+RUN set -eu; \
+    for public in apps/"$LAYER_APP"/*/public; do \
+      [ -d "$public" ] || continue; \
+      [ ! -d apps/"$LAYER_APP"/node_modules ] || ln -sfn ../../node_modules "$public/node_modules"; \
+    done; \
+    bench build --app "$LAYER_APP" --production; \
+    python3 /opt/frappe-deploy/prune_node_modules.py --bench . --app "$LAYER_APP"; \
+    python3 /opt/frappe-deploy/finalize_layer.py --bench . --project /opt/app-source --app "$LAYER_APP"
+LABEL org.opencontainers.image.revision=$SOURCE_REVISION
