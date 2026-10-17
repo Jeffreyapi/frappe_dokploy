@@ -10,6 +10,9 @@ wait_prereqs() {
   wait-for-it -t 120 "${REDIS_QUEUE:-redis-queue:6379}"
 }
 configure_common() {
+  # `bench init` crée ce fichier ; `bench set-config -g` l'ouvre sans le créer. Un volume `sites`
+  # né avant l'image courante ne le contient pas et Docker ne le repeuple jamais.
+  [[ -f sites/common_site_config.json ]] || printf '{}\n' > sites/common_site_config.json
   bench set-config -g db_host "${DB_HOST:-db}"
   bench set-config -gp db_port "${DB_PORT:-3306}"
   bench set-config -g redis_cache "redis://${REDIS_CACHE:-redis-cache:6379}"
