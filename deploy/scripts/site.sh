@@ -9,6 +9,13 @@ wait_prereqs() {
   wait-for-it -t 120 "${REDIS_CACHE:-redis-cache:6379}"
   wait-for-it -t 120 "${REDIS_QUEUE:-redis-queue:6379}"
 }
+sync_apps_list() {
+  # `sites/` est un volume : l'apps.txt de l'image n'y est copié qu'à la création du volume.
+  # Sans cette synchro, une app ajoutée après le premier déploiement échoue en
+  # « App X not in apps.txt ». /opt/apps.txt est la liste de l'image (hors volume).
+  [[ -f /opt/apps.txt ]] || return 0
+  cp /opt/apps.txt sites/apps.txt
+}
 configure_common() {
   # `bench init` crée ce fichier ; `bench set-config -g` l'ouvre sans le créer. Un volume `sites`
   # né avant l'image courante ne le contient pas et Docker ne le repeuple jamais.
@@ -92,6 +99,7 @@ main() {
   [[ "$SITE_NAME" =~ ^[a-zA-Z0-9][a-zA-Z0-9.-]*$ && "$SITE_NAME" != *..* ]] || die "Invalid site name"
   local action="${1:-update}"
   wait_prereqs
+  sync_apps_list
   configure_common
   if [[ "$action" == configure ]]; then return; fi
   # Serialize lifecycle operations across site-manager containers sharing this volume.

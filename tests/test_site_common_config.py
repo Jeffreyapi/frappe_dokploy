@@ -19,3 +19,10 @@ def test_an_empty_app_list_means_frappe_only_not_a_failure():
     empty_branch = body.index('if [[ -z "$apps" ]]; then\n    log "No additional apps')
     assert "return 0" in body[empty_branch : empty_branch + 200]
     assert empty_branch < body.index("list-apps")
+
+
+def test_apps_list_is_resynced_from_the_image_before_any_bench_command():
+    text = SITE_SH.read_text()
+    assert "cp /opt/apps.txt sites/apps.txt" in text
+    main = text[text.index("main() {") :]
+    assert main.index("sync_apps_list") < main.index("configure_common")
