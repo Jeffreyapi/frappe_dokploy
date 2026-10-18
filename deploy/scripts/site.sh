@@ -56,7 +56,11 @@ install_apps() {
   if [[ -z "$apps" ]]; then
     apps="$(python3 -c 'import json; print(",".join(a["name"] for a in json.load(open("/opt/apps-manifest.json"))))')"
   fi
-  [[ -n "$apps" ]] || die "No apps selected for installation"
+  # Frappe seul : `new-site` l'a déjà installé, il n'y a rien d'autre à installer.
+  if [[ -z "$apps" ]]; then
+    log "No additional apps to install (Frappe only)"
+    return 0
+  fi
   installed="$(bench --site "$SITE_NAME" list-apps --format json)"
   IFS=',' read -ra app_names <<< "$apps"
   for app in "${app_names[@]}"; do
