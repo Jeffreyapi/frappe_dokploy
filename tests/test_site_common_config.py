@@ -26,3 +26,11 @@ def test_apps_list_is_resynced_from_the_image_before_any_bench_command():
     assert "cp /opt/apps.txt sites/apps.txt" in text
     main = text[text.index("main() {") :]
     assert main.index("sync_apps_list") < main.index("configure_common")
+
+
+def test_assets_volume_is_chowned_by_a_root_init_service_before_site_manager():
+    compose = (SITE_SH.parents[2] / "docker-compose.yml").read_text()
+    init = compose[compose.index("  volume-init:") : compose.index("  site-manager:")]
+    assert "user: root" in init and "chown" in init and "sites/assets" in init
+    manager = compose[compose.index("  site-manager:") :]
+    assert "volume-init:\n        condition: service_completed_successfully" in manager[:400]

@@ -43,6 +43,16 @@ x-redis-service: &redis_service
 
 services:
 
+  # ── Volume init (root, one-shot) : un volume existant n'est jamais re-semé depuis
+  # l'image, donc `sites/assets` peut rester root:root et bloquer la copie des assets.
+  volume-init:
+    <<: *frappe_base
+    user: root
+    entrypoint: ["sh", "-c", "chown frappe:frappe /home/frappe/frappe-bench/sites /home/frappe/frappe-bench/sites/assets && chown -R frappe:frappe /home/frappe/frappe-bench/sites/assets"]
+    deploy:
+      restart_policy:
+        condition: none
+
   # ── Site manager (one-shot : configure → create/restore/update) ─────────────
   site-manager:
     <<: *frappe_base
@@ -54,6 +64,9 @@ services:
     volumes:
       - sites:/home/frappe/frappe-bench/sites
       - assets:/home/frappe/frappe-bench/sites/assets
+    depends_on:
+      volume-init:
+        condition: service_completed_successfully
     entrypoint: ["bash", "/opt/frappe-deploy/init.sh"]
     environment:
       <<: *frappe_environment

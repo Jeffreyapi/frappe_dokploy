@@ -19,7 +19,7 @@ RUN --mount=type=secret,id=proxy_ca,mode=0444 set -eu; \
     tar -xzf /tmp/s5cmd.tar.gz -C /usr/local/bin s5cmd; \
     rm /tmp/s5cmd.tar.gz; s5cmd version; \
     chmod 755 /opt/frappe-deploy/*.sh /usr/local/bin/nginx-entrypoint.sh && \
-    mkdir -p /home/frappe/frappe-bench/sites /opt/image-assets && \
+    mkdir -p /home/frappe/frappe-bench/sites/assets /opt/image-assets && \
     chown -R frappe:frappe /home/frappe/frappe-bench /opt/image-assets
 ENV PATH="/home/frappe/frappe-bench/env/bin:${PATH}"
 USER frappe
