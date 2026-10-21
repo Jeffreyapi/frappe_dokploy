@@ -105,7 +105,9 @@ def upload(directory, site, deployment):
 
 def create(bench, site, deployment):
     backup_id = datetime.now(UTC).strftime("%Y%m%dT%H%M%S") + "-" + uuid.uuid4().hex
-    directory = bench / "sites" / identity(site) / "private" / "backups" / "sets" / backup_id
+    # Hors de `private/backups/` : `bench backup` y supprime (`os.remove`) tout ce qui est ancien,
+    # y compris un dossier `sets`, et échoue alors en IsADirectoryError.
+    directory = bench / "sites" / identity(site) / "private" / "backup-sets" / backup_id
     directory.mkdir(parents=True, mode=0o700)
     command("bench", "--site", site, "backup", "--with-files", "--backup-path", str(directory), cwd=bench)
     make_manifest(directory, site, deployment)
