@@ -88,8 +88,11 @@ identity. S3 upload uses `S3_BACKUP_ENABLED`, `S3_BACKUP_BUCKET`, optional
 `S3_ENDPOINT_URL`/`S3_BACKUP_REGION` and optional static credentials.
 The manifest is uploaded last. Restoration refuses incomplete, corrupt or
 foreign sets and restores the encryption key without replacing target DB
-credentials. Backup scheduling, retention and cross-environment sanitization
-remain hosting responsibilities.
+credentials. Local sets live in `sites/<site>/private/backup-sets/` (never under
+`private/backups/`, which Frappe purges); after a verified S3 upload they are
+removed, otherwise the last 3 are kept (`BACKUP_LOCAL_KEEP` overrides). Backup
+scheduling, S3 retention and cross-environment sanitization remain hosting
+responsibilities.
 
 Legacy copy/replace scaffolding is no longer supported. `APPS_JSON_BASE64` is
 back as a narrower, build-arg-only alternative to the named `app_source`

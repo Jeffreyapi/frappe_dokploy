@@ -5,12 +5,21 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
+
+SET_ID = re.compile(r"\d{8}T\d{6}-[0-9a-f]{32}")
+# Un ensemble sans manifest est un backup interrompu ; en dessous de cet âge il peut encore
+# être en cours d'écriture par une autre exécution.
+INCOMPLETE_MAX_AGE = 24 * 3600
+LOCAL_KEEP_WHEN_UPLOADED = 0
+LOCAL_KEEP_WHEN_LOCAL_ONLY = 3
 
 ROLES = {"database": "*-database.sql.gz", "public": "*-files.tar",
          "private": "*-private-files.tar", "config": "*site_config_backup.json"}
@@ -103,18 +112,62 @@ def upload(directory, site, deployment):
     command(*s3_command(), "cp", str(directory / "manifest.json"), prefix)
 
 
-def create(bench, site, deployment):
-    backup_id = datetime.now(UTC).strftime("%Y%m%dT%H%M%S") + "-" + uuid.uuid4().hex
+def sets_root(bench, site):
     # Hors de `private/backups/` : `bench backup` y supprime (`os.remove`) tout ce qui est ancien,
     # y compris un dossier `sets`, et échoue alors en IsADirectoryError.
-    directory = bench / "sites" / identity(site) / "private" / "backup-sets" / backup_id
+    return bench / "sites" / identity(site) / "private" / "backup-sets"
+
+
+def adopt_legacy_sets(bench, site):
+    """Vide l'ancien `private/backups/sets` : sur un volume existant il fait échouer `bench backup`."""
+    legacy = bench / "sites" / identity(site) / "private" / "backups" / "sets"
+    if legacy.is_symlink() or not legacy.is_dir():
+        return
+    root = sets_root(bench, site)
+    root.mkdir(parents=True, mode=0o700, exist_ok=True)
+    for child in legacy.iterdir():
+        target = root / child.name
+        if SET_ID.fullmatch(child.name) and child.is_dir() and not child.is_symlink() and not target.exists():
+            child.rename(target)
+    # Ce dossier n'a jamais été créé que par ce script : ce qui reste n'est pas un ensemble valide.
+    shutil.rmtree(legacy)
+
+
+def prune_local_sets(root, keep, now=None):
+    """Garde les `keep` ensembles complets les plus récents et supprime les ensembles
+    interrompus de plus de 24 h. Ne touche qu'aux dossiers nommés `<horodatage>-<uuid>`."""
+    now = time.time() if now is None else now
+    candidates = sorted(p for p in root.iterdir() if SET_ID.fullmatch(p.name) and p.is_dir() and not p.is_symlink())
+    complete = [p for p in candidates if (p / "manifest.json").is_file()]
+    for path in candidates:
+        if path not in complete and now - path.stat().st_mtime > INCOMPLETE_MAX_AGE:
+            shutil.rmtree(path)
+    for path in complete[: max(len(complete) - keep, 0)]:
+        shutil.rmtree(path)
+
+
+def local_keep(uploaded):
+    default = LOCAL_KEEP_WHEN_UPLOADED if uploaded else LOCAL_KEEP_WHEN_LOCAL_ONLY
+    value = os.environ.get("BACKUP_LOCAL_KEEP") or str(default)
+    if not value.isdigit():
+        raise ValueError("BACKUP_LOCAL_KEEP must be a non-negative integer")
+    return int(value)
+
+
+def create(bench, site, deployment):
+    adopt_legacy_sets(bench, site)
+    backup_id = datetime.now(UTC).strftime("%Y%m%dT%H%M%S") + "-" + uuid.uuid4().hex
+    directory = sets_root(bench, site) / backup_id
     directory.mkdir(parents=True, mode=0o700)
     command("bench", "--site", site, "backup", "--with-files", "--backup-path", str(directory), cwd=bench)
     make_manifest(directory, site, deployment)
-    if os.environ.get("S3_BACKUP_ENABLED", "0").lower() in ("1", "true"):
+    uploaded = os.environ.get("S3_BACKUP_ENABLED", "0").lower() in ("1", "true")
+    if uploaded:
         upload(directory, site, deployment)
     else:
         print("S3 disabled; verified backup is local only", file=sys.stderr)
+    # Après l'envoi vérifié, la copie S3 fait foi ; sans S3, la copie locale est la seule.
+    prune_local_sets(sets_root(bench, site), local_keep(uploaded))
     return directory
 
 
