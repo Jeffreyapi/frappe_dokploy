@@ -126,6 +126,7 @@ services:
       S3_BACKUP_ACCESS_KEY: ${S3_BACKUP_ACCESS_KEY:-}
       S3_BACKUP_SECRET_KEY: ${S3_BACKUP_SECRET_KEY:-}
       S3_ENDPOINT_URL:      ${S3_ENDPOINT_URL:-}
+      BACKUP_LOCAL_KEEP:    ${BACKUP_LOCAL_KEEP:-}
     healthcheck:
       test: ["CMD", "wait-for-it", "0.0.0.0:8000"]
       interval: 2s
