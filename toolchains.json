@@ -2,12 +2,12 @@
   "schema": 1,
   "toolchains": {
     "15": {
-      "status": "candidate",
+      "status": "ready",
       "build_image": "ghcr.io/frappe/build@sha256:77fb36a1ea4d2441f12fd14fbee4f463935bd721d7917d58c2ffe0d86c9928c2",
       "base_image": "ghcr.io/frappe/base@sha256:e9ec617a78433d00dddff723d8f0b707edd296576ec6437721e498dc76c9cdda",
       "python": "3.11.18",
       "node": null,
-      "validated_with": null
+      "validated_with": "v15.122.0"
     },
     "16": {
       "status": "ready",
