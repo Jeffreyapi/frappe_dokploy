@@ -115,6 +115,8 @@ def test_finalizer_keeps_parent_assets_and_per_app_translations(tmp_path):
     assets = bench / "sites/assets"
     (assets / "custom").mkdir(parents=True)
     (assets / "custom/bundle.js").write_text("built")
+    # Lien versionné par erreur dans le dépôt de l'app, vers un chemin de poste de dev.
+    (assets / "custom/node_modules 2").symlink_to("/workspace/development/custom/node_modules")
     locale = assets / "locale/fr/LC_MESSAGES"
     locale.mkdir(parents=True); (locale / "custom.mo").write_bytes(b"translation")
     (assets / "assets.json").write_text(json.dumps({"custom.bundle.js": "/assets/custom/dist/new.js"}))
@@ -127,6 +129,7 @@ def test_finalizer_keeps_parent_assets_and_per_app_translations(tmp_path):
     assert json.loads((image / "assets.json").read_text()) == {
         "frappe.bundle.js": "/assets/frappe/dist/parent.js", "custom.bundle.js": "/assets/custom/dist/new.js"}
     assert (tmp_path / "slices/custom/locale/fr/LC_MESSAGES/custom.mo").read_bytes() == b"translation"
+    assert sorted(path.name for path in (image / "custom").iterdir()) == ["bundle.js"]
     assert json.loads((home / "apps-manifest.json").read_text()) == [entry]
 
 
