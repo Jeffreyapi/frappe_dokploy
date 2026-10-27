@@ -9,6 +9,14 @@ from pathlib import Path
 from app_sources import load_manifest
 
 
+def skip_unmaterializable(directory, names):
+    """node_modules, et les liens symboliques qui ne pointent sur rien : un dépôt d'app peut en
+    versionner par erreur (cible absolue d'un poste de dev) et `copytree` échouerait dessus."""
+    base = Path(directory)
+    return [name for name in names
+            if name == "node_modules" or ((base / name).is_symlink() and not (base / name).exists())]
+
+
 def finalize(bench, project, app, home, slices=Path("/opt/runtime-slice")):
     manifest_path = home / "apps-manifest.json"
     entries = json.loads(manifest_path.read_text()) if manifest_path.exists() else []
@@ -29,7 +37,7 @@ def finalize(bench, project, app, home, slices=Path("/opt/runtime-slice")):
     if source.exists():
         # The bench's app asset directories are symlinks; materialize them so the
         # immutable runtime copy does not point back into a build bench.
-        shutil.copytree(source, target, symlinks=False, ignore=shutil.ignore_patterns("node_modules"))
+        shutil.copytree(source, target, symlinks=False, ignore=skip_unmaterializable)
     else:
         target.mkdir()
     for name in ("assets.json", "assets-rtl.json"):
