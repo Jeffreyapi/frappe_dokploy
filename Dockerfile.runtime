@@ -9,6 +9,9 @@ COPY resources/nginx-template.conf /templates/nginx/frappe.conf.template
 FROM ${BASE_IMAGE} AS runtime
 ARG S5CMD_VERSION=2.2.0
 USER root
+# Frappe 15 crée l'utilisateur sans groupe `frappe` (gid 0) ; v16 en a un. Les `chown frappe:frappe`
+# ci-dessous exigent donc le groupe, sans effet quand il existe déjà.
+RUN getent group frappe >/dev/null || groupadd -g 1000 frappe
 COPY --from=runtime-files / /
 RUN --mount=type=secret,id=proxy_ca,mode=0444 set -eu; \
     if [ -f /run/secrets/proxy_ca ]; then export CURL_CA_BUNDLE=/run/secrets/proxy_ca; fi; \

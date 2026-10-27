@@ -4,7 +4,10 @@ ARG BUILD_IMAGE=ghcr.io/frappe/build@sha256:9e876dcf4f7b5b992ed4ab86bc0079c2dc84
 ARG PARENT_IMAGE=${BUILD_IMAGE}
 FROM ${PARENT_IMAGE} AS layer
 USER root
-RUN mkdir -p /opt/runtime-slice /opt/app-source /opt/frappe-deploy && \
+# Frappe 15 crée l'utilisateur sans groupe `frappe` (gid 0) ; v16 en a un. Les `chown frappe:frappe`
+# ci-dessous exigent donc le groupe, sans effet quand il existe déjà.
+RUN getent group frappe >/dev/null || groupadd -g 1000 frappe && \
+    mkdir -p /opt/runtime-slice /opt/app-source /opt/frappe-deploy && \
     chown -R frappe:frappe /opt/runtime-slice /opt/app-source /opt/frappe-deploy
 COPY --chown=frappe:frappe scripts/app_sources.py scripts/prune_node_modules.py scripts/finalize_layer.py /opt/frappe-deploy/
 USER frappe

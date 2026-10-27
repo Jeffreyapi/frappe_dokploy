@@ -116,3 +116,13 @@ def test_gunicorn_env_wrapper(tmp_path):
     assert subprocess.run(["bash", str(ROOT / "deploy/scripts/gunicorn.sh")], env=env, capture_output=True, check=False).returncode != 0
 
 
+
+
+@pytest.mark.parametrize("dockerfile", ["Dockerfile.layer", "Dockerfile.runtime"])
+def test_frappe_group_exists_before_it_is_used_in_chown(dockerfile):
+    # Frappe 15 crée l'utilisateur `frappe` avec le groupe root : sans groupe `frappe`,
+    # `chown frappe:frappe` et `COPY --chown=frappe:frappe` échouent.
+    text = (ROOT / dockerfile).read_text()
+    guard = text.index("RUN getent group frappe")
+    uses = [text.index(m) for m in ("-R frappe:frappe", "--chown=frappe:frappe") if m in text]
+    assert uses and all(guard < use for use in uses)
