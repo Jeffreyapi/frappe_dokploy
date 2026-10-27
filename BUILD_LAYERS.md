@@ -92,18 +92,19 @@ toolchain en découle, il ne se configure pas site par site.
 
 | Champ | Sens |
 | --- | --- |
-| `status` | `ready` : construit et validé. `todo` : à renseigner, jamais utilisable. |
+| `status` | `ready` : construit et validé. `candidate` : digests renseignés et utilisables, pas encore validés par un build réel. `todo` : à renseigner, jamais utilisable. |
 | `build_image`, `base_image` | Références `ghcr.io/frappe/{build,base}@sha256:…`. Jamais un tag mobile. `null` tant que `todo`. |
 | `python`, `node` | Versions embarquées, à titre informatif. |
-| `validated_with` | Tag de Frappe réellement construit avec ce toolchain ; `null` tant que `todo`. |
+| `validated_with` | Tag de Frappe réellement construit avec ce toolchain ; `null` tant que non `ready`. |
 
 Pour ouvrir une version (par exemple `15`) : renseigner les deux digests, construire une base puis
 une app puis le runtime avec `FRAPPE_VERSION=v15.x`, exécuter les spikes S1 (fusion des assets),
 S2 (node_modules) et un cycle `new-site` / `migrate` / restauration sur MariaDB, puis passer
 `status` à `ready` et remplir `validated_with`. `scripts/test_toolchains.py` refuse un toolchain
 prêt incomplet, un tag mobile et toute dérive de la ligne `16` par rapport aux `ARG` par défaut
-des Dockerfiles. **Ce fichier n'est pas encore lu par Quai** : tant qu'il ne l'est pas, les `ARG`
-des Dockerfiles restent la source effective.
+des Dockerfiles. Quai lit ce fichier à la révision épinglée de `frappe_dokploy` et choisit la ligne selon la version
+de Frappe du Bench ; une version absente ou `todo` est refusée. Les `ARG` des Dockerfiles ne servent
+qu'aux builds hors Quai.
 
 ## Validation et spikes
 

@@ -22,24 +22,24 @@ def test_the_table_is_a_versioned_map_of_frappe_majors():
     for major, entry in TABLE["toolchains"].items():
         assert major.isdigit(), major
         assert set(entry) == FIELDS, major
-        assert entry["status"] in {"todo", "ready"}, major
+        assert entry["status"] in {"todo", "candidate", "ready"}, major
 
 
-def test_images_are_pinned_by_digest_and_a_ready_toolchain_is_complete():
+def test_images_are_pinned_by_digest_and_a_usable_toolchain_is_complete():
     for major, entry in TABLE["toolchains"].items():
         for field, pattern in (("build_image", BUILD), ("base_image", BASE)):
             value = entry[field]
-            if entry["status"] == "ready":
-                assert value is not None, f"{major}.{field} requis pour un toolchain prêt"
+            if entry["status"] in {"candidate", "ready"}:
+                assert value is not None, f"{major}.{field} requis pour un toolchain utilisable"
             if value is not None:
                 assert pattern.fullmatch(value), f"{major}.{field} doit être épinglé par digest"
         if entry["status"] == "ready":
             assert entry["validated_with"], f"{major}: indiquer le tag de Frappe réellement construit"
 
 
-def test_a_toolchain_still_to_do_never_ships_a_validation_claim():
+def test_only_a_ready_toolchain_claims_a_validation():
     for major, entry in TABLE["toolchains"].items():
-        if entry["status"] == "todo":
+        if entry["status"] != "ready":
             assert entry["validated_with"] is None, major
 
 
