@@ -63,6 +63,30 @@ def test_app_declarations_and_empty_slices(tmp_path):
     assert (tmp_path / "slices/empty/assets-node_modules").is_dir()
 
 
+def frappe_bench(tmp_path, dependencies, installed):
+    app = tmp_path / "bench/apps/frappe"
+    for name in installed:
+        package(app / "node_modules", name)
+    (app / "package.json").write_text(json.dumps({"dependencies": {name: "1" for name in dependencies}}))
+    return tmp_path / "bench"
+
+
+def test_builtin_roots_follow_the_dependencies_of_the_frappe_version(tmp_path):
+    # Frappe 15 ne déclare pas photoswipe ; ses autres racines intégrées restent exigées.
+    roots = ["socket.io", "@redis/client", "cookie", "qz-tray", "js-sha256", "html5-qrcode", "frappe-gantt", "ace-builds"]
+    bench = frappe_bench(tmp_path, roots, roots)
+    result = build_slice(bench, "frappe", tmp_path / "slices")
+    assert "photoswipe" not in result["assets"] and "ace-builds" in result["assets"]
+    with_photoswipe = frappe_bench(tmp_path / "v16", [*roots, "photoswipe"], [*roots, "photoswipe"])
+    assert "photoswipe" in build_slice(with_photoswipe, "frappe", tmp_path / "slices16")["assets"]
+
+
+def test_declared_builtin_root_missing_from_node_modules_is_still_an_error(tmp_path):
+    bench = frappe_bench(tmp_path, ["photoswipe", "socket.io"], ["socket.io"])
+    with pytest.raises(ValueError, match="Missing runtime root package"):
+        build_slice(bench, "frappe", tmp_path / "slices")
+
+
 def test_only_installs_selected_dependencies_and_preserves_parent(tmp_path):
     project, bench = tmp_path / "project", tmp_path / "bench"
     project.mkdir(); (bench / "sites").mkdir(parents=True)
