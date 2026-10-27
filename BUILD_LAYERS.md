@@ -83,10 +83,32 @@ Le journal `config.applied` contient des noms de clés, jamais leurs valeurs.
 sont `QUEUE_DEFAULT_REPLICAS`, `QUEUE_SHORT_REPLICAS`, `QUEUE_LONG_REPLICAS` (défaut 1).
 Les réglages Chromium et frontend figurent dans `.env.example`.
 
+## Toolchains par version de Frappe
+
+`toolchains.json` associe à chaque version **majeure** de Frappe les images de build et
+d'exécution (`ghcr.io/frappe/build` et `ghcr.io/frappe/base`, épinglées par digest). La version
+de Frappe est portée par le Bench du consommateur (`FRAPPE_VERSION`, `FRAPPE_REVISION`) ; le
+toolchain en découle, il ne se configure pas site par site.
+
+| Champ | Sens |
+| --- | --- |
+| `status` | `ready` : construit et validé. `todo` : à renseigner, jamais utilisable. |
+| `build_image`, `base_image` | Références `ghcr.io/frappe/{build,base}@sha256:…`. Jamais un tag mobile. `null` tant que `todo`. |
+| `python`, `node` | Versions embarquées, à titre informatif. |
+| `validated_with` | Tag de Frappe réellement construit avec ce toolchain ; `null` tant que `todo`. |
+
+Pour ouvrir une version (par exemple `15`) : renseigner les deux digests, construire une base puis
+une app puis le runtime avec `FRAPPE_VERSION=v15.x`, exécuter les spikes S1 (fusion des assets),
+S2 (node_modules) et un cycle `new-site` / `migrate` / restauration sur MariaDB, puis passer
+`status` à `ready` et remplir `validated_with`. `scripts/test_toolchains.py` refuse un toolchain
+prêt incomplet, un tag mobile et toute dérive de la ligne `16` par rapport aux `ARG` par défaut
+des Dockerfiles. **Ce fichier n'est pas encore lu par Quai** : tant qu'il ne l'est pas, les `ARG`
+des Dockerfiles restent la source effective.
+
 ## Validation et spikes
 
 ```sh
-python -m pytest -q scripts/test_app_sources.py scripts/test_layer_build.py scripts/test_runtime_config.py
+python -m pytest -q scripts/test_app_sources.py scripts/test_layer_build.py scripts/test_runtime_config.py scripts/test_toolchains.py
 python scripts/test_secret_fetch.py
 python scripts/test_fd.py  # nécessite textual
 bash -n deploy/scripts/site.sh deploy/scripts/gunicorn.sh

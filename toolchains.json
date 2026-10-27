@@ -1,0 +1,21 @@
+{
+  "schema": 1,
+  "toolchains": {
+    "15": {
+      "status": "todo",
+      "build_image": null,
+      "base_image": null,
+      "python": null,
+      "node": null,
+      "validated_with": null
+    },
+    "16": {
+      "status": "ready",
+      "build_image": "ghcr.io/frappe/build@sha256:9e876dcf4f7b5b992ed4ab86bc0079c2dc84f5d2df7fe076e43b4cbbd2772163",
+      "base_image": "ghcr.io/frappe/base@sha256:86f2b7b9ec64a0b1d91a29e89b81ac708738bdec5e2e02b101c80942bf1bbba5",
+      "python": null,
+      "node": null,
+      "validated_with": "v16.33.1"
+    }
+  }
+}
