@@ -156,3 +156,10 @@ def test_frappe_group_exists_before_it_is_used_in_chown(dockerfile):
     guard = text.index("RUN getent group frappe")
     uses = [text.index(m) for m in ("-R frappe:frappe", "--chown=frappe:frappe") if m in text]
     assert uses and all(guard < use for use in uses)
+
+
+def test_layer_links_node_modules_only_into_the_apps_own_module():
+    # `frontend/public` (Vite) lié vers le workspace racine bouclerait : ELOOP à la copie du public/.
+    text = (ROOT / "Dockerfile.layer").read_text()
+    assert 'apps/"$LAYER_APP"/*/public' not in text
+    assert 'public=apps/"$LAYER_APP"/"$LAYER_APP"/public' in text
