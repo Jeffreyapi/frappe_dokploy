@@ -46,10 +46,13 @@ RUN --mount=type=secret,id=git_token,env=GITHUB_TOKEN --mount=type=secret,id=pro
     fi
 WORKDIR /home/frappe/frappe-bench
 RUN set -eu; \
-    for public in apps/"$LAYER_APP"/*/public; do \
-      [ -d "$public" ] || continue; \
-      [ ! -d apps/"$LAYER_APP"/node_modules ] || ln -sfn ../../node_modules "$public/node_modules"; \
-    done; \
+    # Seul le module Frappe de l'app (apps/<app>/<app>/public) reçoit le lien : un autre dossier
+    # `*/public` est celui d'un workspace (ex. frontend/public de Vite), et le lien y bouclerait
+    # sur le workspace racine (ELOOP à la copie du public/ par Vite).
+    public=apps/"$LAYER_APP"/"$LAYER_APP"/public; \
+    if [ -d "$public" ] && [ -d apps/"$LAYER_APP"/node_modules ]; then \
+      ln -sfn ../../node_modules "$public/node_modules"; \
+    fi; \
     bench build --app "$LAYER_APP" --production; \
     python3 /opt/frappe-deploy/prune_node_modules.py --bench . --app "$LAYER_APP"; \
     python3 /opt/frappe-deploy/finalize_layer.py --bench . --project /opt/app-source --app "$LAYER_APP"

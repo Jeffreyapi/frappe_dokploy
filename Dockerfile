@@ -71,10 +71,9 @@ RUN --mount=type=secret,id=git_token,env=GITHUB_TOKEN \
     for app_dir in apps/*/; do \
       node_modules="$app_dir/node_modules"; \
       [ -d "$node_modules" ] || continue; \
-      for pymod_dir in "$app_dir"/*/; do \
-        [ -d "$pymod_dir/public" ] || continue; \
-        [ -e "$pymod_dir/public/node_modules" ] || ln -sfn ../../node_modules "$pymod_dir/public/node_modules"; \
-      done; \
+      pymod_dir="$app_dir/$(basename "$app_dir")"; \
+      [ -d "$pymod_dir/public" ] || continue; \
+      [ -e "$pymod_dir/public/node_modules" ] || ln -sfn ../../node_modules "$pymod_dir/public/node_modules"; \
     done && \
     bench build --hard-link --production && \
     cp /opt/app-source/apps.json /home/frappe/apps-manifest.json && \
