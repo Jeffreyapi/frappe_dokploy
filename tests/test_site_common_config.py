@@ -34,3 +34,30 @@ def test_assets_volume_is_chowned_by_a_root_init_service_before_site_manager():
     assert "user: root" in init and "chown" in init and "sites/assets" in init
     manager = compose[compose.index("  site-manager:") :]
     assert "volume-init:\n        condition: service_completed_successfully" in manager[:400]
+
+
+def _case(text, name):
+    start = text.index(f"    {name})\n")
+    return text[start : text.index("      ;;", start)]
+
+
+def test_encryption_key_is_ensured_so_the_first_backup_can_succeed():
+    text = SITE_SH.read_text()
+    body = text[text.index("ensure_encryption_key() {") : text.index("\n}\n", text.index("ensure_encryption_key() {"))]
+    assert "frappe.utils.password.get_encryption_key" in body
+    # la valeur de retour EST la clé : jamais dans les logs
+    assert ">/dev/null" in body
+    assert "ensure_encryption_key" in _case(text, "create")
+    assert "ensure_encryption_key" in _case(text, "update")
+
+
+def test_the_key_is_not_generated_before_a_restore_which_brings_its_own():
+    restore = _case(SITE_SH.read_text(), "restore")
+    assert "ensure_encryption_key" not in restore  # la clé vient de la sauvegarde (backup.py restore)
+
+
+def test_the_key_is_created_after_the_site_exists_and_before_maintenance_or_apps():
+    create = _case(SITE_SH.read_text(), "create")
+    assert create.index("ensure_site") < create.index("ensure_encryption_key") < create.index("install_apps")
+    update = _case(SITE_SH.read_text(), "update")
+    assert update.index("require_site_exists") < update.index("ensure_encryption_key") < update.index("install_apps")

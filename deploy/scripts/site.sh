@@ -40,6 +40,12 @@ ensure_site() {
   fi
   require_site_exists
 }
+ensure_encryption_key() {
+  # Frappe ne crée `encryption_key` que paresseusement (au premier secret chiffré) : un site neuf n'en a pas, et
+  # `backup.py` refuse alors de sauvegarder (« no encryption_key »). `get_encryption_key` la crée si elle manque et ne
+  # remplace jamais une clé existante. Sa valeur de retour est la clé : stdout part dans /dev/null, jamais dans les logs.
+  bench --site "$SITE_NAME" execute frappe.utils.password.get_encryption_key >/dev/null
+}
 enable_maintenance() {
   bench --site "$SITE_NAME" set-config -p maintenance_mode 1
   bench --site "$SITE_NAME" set-config -p pause_scheduler 1
@@ -109,6 +115,7 @@ main() {
   case "$action" in
     create)
       ensure_site
+      ensure_encryption_key
       enable_maintenance
       trap migration_failed ERR
       install_apps
@@ -118,6 +125,7 @@ main() {
       ;;
     update)
       require_site_exists
+      ensure_encryption_key
       enable_maintenance
       trap migration_failed ERR
       install_apps
